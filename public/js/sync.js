@@ -15,10 +15,13 @@ export async function pushDirty() {
         notes: notes.map(serializeNote),
     };
     const res = await api.syncPush(payload);
-    const okTaskIds = (res.appliedTasks || []).map(t => t.id);
-    const okNoteIds = (res.appliedNotes || []).map(n => n.id);
-    if (okTaskIds.length) await Tasks.clearDirty(okTaskIds);
-    if (okNoteIds.length) await Notes.clearDirty(okNoteIds);
+    // Use the locally-pushed updated_at (not the server-confirmed one) so that
+    // any record that was edited again while the push was in flight keeps its
+    // dirty flag and is re-pushed on the next sync.
+    const pushedTasks = tasks.map(t => ({ id: t.id, updated_at: t.updated_at }));
+    const pushedNotes = notes.map(n => ({ id: n.id, updated_at: n.updated_at }));
+    if (pushedTasks.length) await Tasks.clearDirty(pushedTasks);
+    if (pushedNotes.length) await Notes.clearDirty(pushedNotes);
     if (res.appliedTasks?.length) await Tasks.replaceFromServer(res.appliedTasks);
     if (res.appliedNotes?.length) await Notes.replaceFromServer(res.appliedNotes);
     return { pushed: tasks.length + notes.length, rejected: res.rejected || [] };

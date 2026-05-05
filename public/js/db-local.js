@@ -20,6 +20,15 @@ function uuid() {
 
 function now() { return Date.now(); }
 
+/**
+ * Strip framework-specific reactive wrappers (e.g. Alpine.js Proxy) so the
+ * value can be passed to IndexedDB's structured clone algorithm.
+ */
+function toPlain(value) {
+    if (value === null || value === undefined) return value;
+    return JSON.parse(JSON.stringify(value));
+}
+
 const Tasks = {
     async list({ includeDeleted = false, status, search } = {}) {
         let coll = db.tasks.orderBy('updated_at').reverse();
@@ -48,8 +57,8 @@ const Tasks = {
             due_at: task.due_at ?? null,
             remind_at: task.remind_at ?? null,
             repeat_rule: task.repeat_rule ?? null,
-            tags: task.tags ?? [],
-            subtasks: task.subtasks ?? [],
+            tags: toPlain(task.tags) ?? [],
+            subtasks: toPlain(task.subtasks) ?? [],
             created_at: existing?.created_at || task.created_at || now(),
             updated_at: task.updated_at || now(),
             completed_at: task.completed_at ?? (task.status === 'done' ? now() : null),
@@ -76,15 +85,32 @@ const Tasks = {
         return Tasks.upsert({ ...t, deleted_at: null, updated_at: now() });
     },
     async dirty() { return db.tasks.where('dirty').equals(1).toArray(); },
-    async clearDirty(ids) {
-        await db.tasks.where('id').anyOf(ids).modify({ dirty: 0 });
+    /**
+     * Clear dirty flag, but only for records whose updated_at still matches
+     * the version that was successfully pushed. This prevents a concurrent
+     * local edit (made while the push was in flight) from being marked clean
+     * and then clobbered by replaceFromServer.
+     *
+     * @param {Array<{id: string, updated_at: number}>} pushed
+     */
+    async clearDirty(pushed) {
+        if (!pushed?.length) return;
+        await db.transaction('rw', db.tasks, async () => {
+            for (const p of pushed) {
+                const local = await db.tasks.get(p.id);
+                if (local && local.updated_at === p.updated_at) {
+                    await db.tasks.update(p.id, { dirty: 0 });
+                }
+            }
+        });
     },
     async replaceFromServer(serverItems) {
         if (!serverItems?.length) return;
         await db.transaction('rw', db.tasks, async () => {
             for (const t of serverItems) {
                 const local = await db.tasks.get(t.id);
-                if (local && local.dirty && local.updated_at >= t.updated_at) continue;
+                // Never clobber a record that still has unpushed local edits.
+                if (local && local.dirty) continue;
                 await db.tasks.put({ ...t, dirty: 0 });
             }
         });
@@ -112,7 +138,7 @@ const Notes = {
             id: note.id || uuid(),
             title: note.title ?? '',
             content: note.content ?? '',
-            tags: note.tags ?? [],
+            tags: toPlain(note.tags) ?? [],
             pinned: note.pinned ? 1 : 0,
             favorite: note.favorite ? 1 : 0,
             created_at: existing?.created_at || note.created_at || now(),
@@ -134,13 +160,25 @@ const Notes = {
         return Notes.upsert({ ...n, deleted_at: null, updated_at: now() });
     },
     async dirty() { return db.notes.where('dirty').equals(1).toArray(); },
-    async clearDirty(ids) { await db.notes.where('id').anyOf(ids).modify({ dirty: 0 }); },
+    /** @param {Array<{id: string, updated_at: number}>} pushed */
+    async clearDirty(pushed) {
+        if (!pushed?.length) return;
+        await db.transaction('rw', db.notes, async () => {
+            for (const p of pushed) {
+                const local = await db.notes.get(p.id);
+                if (local && local.updated_at === p.updated_at) {
+                    await db.notes.update(p.id, { dirty: 0 });
+                }
+            }
+        });
+    },
     async replaceFromServer(serverItems) {
         if (!serverItems?.length) return;
         await db.transaction('rw', db.notes, async () => {
             for (const n of serverItems) {
                 const local = await db.notes.get(n.id);
-                if (local && local.dirty && local.updated_at >= n.updated_at) continue;
+                // Never clobber a record that still has unpushed local edits.
+                if (local && local.dirty) continue;
                 await db.notes.put({ ...n, pinned: n.pinned ? 1 : 0, favorite: n.favorite ? 1 : 0, dirty: 0 });
             }
         });

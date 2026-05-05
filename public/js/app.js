@@ -126,7 +126,12 @@ Alpine.data('appShell', () => ({
         if (VIEWS.includes(initialView)) this.view = initialView;
         window.addEventListener('hashchange', () => {
             const v = (location.hash || '#today').slice(1);
-            if (VIEWS.includes(v)) this.view = v;
+            if (VIEWS.includes(v)) {
+                this.view = v;
+                if (v === 'calendar') {
+                    this.$nextTick(() => window.dispatchEvent(new CustomEvent('rn:resize-calendar')));
+                }
+            }
         });
 
         window.addEventListener('online', () => { this.online = true; this.runSync(); });
@@ -150,7 +155,12 @@ Alpine.data('appShell', () => ({
         this.view = v;
         location.hash = '#' + v;
         this.sidebarOpen = false;
-        this.$nextTick(() => createIcons({ icons }));
+        this.$nextTick(() => {
+            createIcons({ icons });
+            if (v === 'calendar') {
+                window.dispatchEvent(new CustomEvent('rn:resize-calendar'));
+            }
+        });
     },
 
     async refreshAll() {
@@ -422,6 +432,7 @@ Alpine.data('notesView', () => ({
 Alpine.data('calendarView', () => ({
     instance: null,
     _reloadListener: null,
+    _resizeListener: null,
     rebuildEvents(tasks) {
         const list = tasks.filter(t => t.due_at);
         return list.map(t => ({
@@ -484,10 +495,22 @@ Alpine.data('calendarView', () => ({
 
         this._reloadListener = () => this.reloadFromTasks();
         window.addEventListener('rn:refresh-views', this._reloadListener);
+
+        this._resizeListener = () => {
+            if (!this.instance) return;
+            requestAnimationFrame(() => this.instance.updateSize());
+        };
+        window.addEventListener('rn:resize-calendar', this._resizeListener);
+
+        // First render runs while the parent section may still be display:none
+        // (Alpine initializes x-data before applying x-show). Defer until after
+        // layout so updateSize() sees the real container width.
+        setTimeout(() => this._resizeListener(), 0);
     },
 
     destroy() {
         window.removeEventListener('rn:refresh-views', this._reloadListener);
+        window.removeEventListener('rn:resize-calendar', this._resizeListener);
         if (this.instance) this.instance.destroy();
         this.instance = null;
     },

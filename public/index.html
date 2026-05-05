@@ -573,7 +573,7 @@
         <template x-if="n">
             <div class="space-y-4">
                 <div class="flex items-center justify-between gap-2">
-                    <button @click="showNoteDetail=null" class="btn-ghost p-2"><i data-lucide="x" class="w-4 h-4"></i></button>
+                    <button @click="if (n) { n.updated_at = Date.now(); saveNote(n); } showNoteDetail=null" class="btn-ghost p-2"><i data-lucide="x" class="w-4 h-4"></i></button>
                     <div class="flex gap-2 items-center">
                         <button @click="preview = !preview" class="btn-ghost text-xs">
                             <i :data-lucide="preview?'pen-line':'eye'" class="w-4 h-4"></i>
@@ -588,15 +588,15 @@
                         </button>
                     </div>
                 </div>
-                <input x-model="n.title" @change="n.updated_at = Date.now(); saveNote(n)" class="input text-xl font-semibold" placeholder="标题" />
+                <input x-model="n.title" @input.debounce.400ms="n.updated_at = Date.now(); saveNote(n)" class="input text-xl font-semibold" placeholder="标题" />
                 <label class="text-xs text-ink-500 block">
                     <span>标签 (用逗号分隔)</span>
                     <input :value="(n.tags || []).join(', ')"
-                           @change="n.tags = $event.target.value.split(',').map(s=>s.trim()).filter(Boolean); n.updated_at = Date.now(); saveNote(n)"
+                           @input.debounce.400ms="n.tags = $event.target.value.split(',').map(s=>s.trim()).filter(Boolean); n.updated_at = Date.now(); saveNote(n)"
                            class="input mt-1" />
                 </label>
                 <template x-if="!preview">
-                    <textarea x-model="n.content" rows="20" @change="n.updated_at = Date.now(); saveNote(n)"
+                    <textarea x-model="n.content" rows="20" @input.debounce.400ms="n.updated_at = Date.now(); saveNote(n)"
                               class="input font-mono text-sm leading-relaxed"></textarea>
                 </template>
                 <template x-if="preview">
