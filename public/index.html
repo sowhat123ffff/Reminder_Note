@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a0a0b" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#fafaf9" media="(prefers-color-scheme: light)" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Reminder Note · 私人备忘</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="assets/icons/icon.svg" />
+    <link rel="apple-touch-icon" href="assets/icons/icon-192.png" />
+    <link rel="stylesheet" href="css/style.css" />
+    <link rel="stylesheet" href="css/calendar.css" />
+</head>
+<body class="bg-ink-50 text-ink-900 dark:bg-ink-950 dark:text-ink-50 antialiased font-sans min-h-[100dvh]"
+      x-data="appShell" x-cloak @rn:open-task.window="showTaskDetail = $event.detail">
+
+<div class="flex min-h-[100dvh]">
+
+    <!-- ===== Desktop sidebar ===== -->
+    <aside class="hidden md:flex w-60 shrink-0 flex-col bg-white/60 dark:bg-ink-900/60 backdrop-blur-xl border-r border-ink-200/60 dark:border-ink-800/60">
+        <div class="p-4 flex items-center gap-3">
+            <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-400 to-brand-700 grid place-items-center text-white font-semibold">RN</div>
+            <div>
+                <div class="font-semibold tracking-tight">Reminder</div>
+                <div class="text-xs text-ink-500 dark:text-ink-400">私人备忘空间</div>
+            </div>
+        </div>
+        <nav class="flex-1 px-2 space-y-1">
+            <template x-for="item in [
+                {id:'today',label:'今天',icon:'sun'},
+                {id:'calendar',label:'日历',icon:'calendar'},
+                {id:'kanban',label:'看板',icon:'columns-3'},
+                {id:'notes',label:'笔记',icon:'notebook-pen'},
+                {id:'stats',label:'统计',icon:'bar-chart-3'},
+            ]" :key="item.id">
+                <button @click="setView(item.id)"
+                        :class="view===item.id ? 'bg-brand-500/15 text-brand-600 dark:text-brand-300' : 'hover:bg-ink-100 dark:hover:bg-ink-800 text-ink-700 dark:text-ink-200'"
+                        class="w-full flex items-center gap-3 px-3 py-2 rounded-xl transition text-sm font-medium">
+                    <i :data-lucide="item.icon" class="w-4 h-4"></i>
+                    <span x-text="item.label"></span>
+                </button>
+            </template>
+        </nav>
+        <div class="p-3 border-t border-ink-200/60 dark:border-ink-800/60 space-y-2">
+            <div x-data="pomodoro" class="card p-3">
+                <div class="flex items-center justify-between text-sm">
+                    <span class="font-medium" x-text="mode === 'idle' ? '番茄钟' : (mode === 'focus' ? '专注中' : '休息中')"></span>
+                    <span class="font-mono text-lg" x-text="formatted()"></span>
+                </div>
+                <div class="mt-2 flex gap-2">
+                    <button x-show="mode==='idle'" @click="start('focus')" class="btn-primary text-xs flex-1">开始</button>
+                    <button x-show="mode!=='idle'" @click="stop()" class="btn-ghost text-xs flex-1">停止</button>
+                </div>
+            </div>
+            <button @click="cycleTheme()" class="btn-ghost w-full justify-start text-sm">
+                <i :data-lucide="theme==='dark'?'moon':theme==='light'?'sun':'monitor'" class="w-4 h-4"></i>
+                <span x-text="theme==='dark'?'深色':theme==='light'?'浅色':'跟随系统'"></span>
+            </button>
+            <div class="space-y-1">
+                <button @click="setAppPin()" class="btn-ghost w-full justify-start text-sm">
+                    <i data-lucide="shield" class="w-4 h-4"></i> 开启应用 PIN
+                </button>
+                <button @click="clearAppPin()" class="btn-ghost w-full justify-start text-xs text-ink-500">
+                    <i data-lucide="shield-off" class="w-4 h-4"></i> 关闭应用 PIN
+                </button>
+            </div>
+            <button @click="logout()" class="btn-ghost w-full justify-start text-sm text-ink-500">
+                <i data-lucide="log-out" class="w-4 h-4"></i> 退出登录
+            </button>
+        </div>
+    </aside>
+
+    <!-- ===== Main column ===== -->
+    <div class="flex-1 min-w-0 flex flex-col pb-16 md:pb-0">
+
+        <!-- Top bar -->
+        <header class="sticky top-0 z-20 bg-white/70 dark:bg-ink-950/70 backdrop-blur-xl border-b border-ink-200/60 dark:border-ink-800/60">
+            <div class="flex items-center gap-2 px-4 md:px-6 h-14">
+                <button @click="sidebarOpen = !sidebarOpen" class="md:hidden btn-ghost p-2">
+                    <i data-lucide="menu" class="w-5 h-5"></i>
+                </button>
+                <div class="hidden md:flex items-center gap-2 text-sm text-ink-500 dark:text-ink-400">
+                    <i data-lucide="sparkles" class="w-4 h-4"></i>
+                    <span x-text="new Date().toLocaleDateString('zh-CN', {year:'numeric', month:'long', day:'numeric', weekday:'long'})"></span>
+                </div>
+                <div class="flex-1"></div>
+                <div class="relative w-full max-w-xs">
+                    <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-400"></i>
+                    <input id="topSearch" x-model="search" type="search" placeholder="搜索 (按 / )"
+                           class="w-full pl-9 pr-3 py-2 rounded-xl bg-ink-100 dark:bg-ink-800/70 border border-transparent focus:bg-white focus:dark:bg-ink-900 focus:border-brand-400 outline-none transition text-sm" />
+                </div>
+                <button @click="runSync()" :disabled="syncing"
+                        :title="online ? '同步' : '离线'"
+                        class="btn-ghost p-2 relative">
+                    <i :data-lucide="syncing ? 'loader-2' : (online ? 'refresh-cw' : 'wifi-off')"
+                       :class="{ 'animate-spin': syncing, 'text-amber-500': !online }"
+                       class="w-4 h-4"></i>
+                </button>
+                <button @click="cycleTheme()" class="btn-ghost p-2 hidden md:inline-flex">
+                    <i :data-lucide="theme==='dark'?'moon':theme==='light'?'sun':'monitor'" class="w-4 h-4"></i>
+                </button>
+            </div>
+            <div x-show="pullDistance > 12" class="px-4 md:px-6 pb-2 text-xs text-brand-600 dark:text-brand-400 text-center" x-transition>
+                下拉同步…(<span x-text="Math.round(pullDistance)"></span>)
+            </div>
+            <div x-show="syncMessage" x-transition class="px-4 md:px-6 pb-2 text-xs text-ink-500 dark:text-ink-400 -mt-1" x-text="syncMessage"></div>
+            <div x-show="!online" class="px-4 md:px-6 py-1 text-xs bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 flex items-center gap-2">
+                <i data-lucide="wifi-off" class="w-3.5 h-3.5"></i> 离线模式 · 修改已暂存本地，恢复网络后会自动同步
+            </div>
+        </header>
+
+        <!-- Mobile drawer -->
+        <div x-show="sidebarOpen" x-transition.opacity class="md:hidden fixed inset-0 bg-black/40 z-30" @click="sidebarOpen=false"></div>
+        <aside x-show="sidebarOpen" x-transition:enter="transition" x-transition:enter-start="-translate-x-full" x-transition:enter-end="translate-x-0"
+               class="md:hidden fixed inset-y-0 left-0 w-64 bg-white dark:bg-ink-950 z-40 p-4 shadow-xl flex flex-col gap-2">
+            <div class="flex items-center justify-between mb-4">
+                <div class="font-semibold">菜单</div>
+                <button class="btn-ghost p-1" @click="sidebarOpen=false"><i data-lucide="x" class="w-4 h-4"></i></button>
+            </div>
+            <template x-for="item in [
+                {id:'today',label:'今天',icon:'sun'},
+                {id:'calendar',label:'日历',icon:'calendar'},
+                {id:'kanban',label:'看板',icon:'columns-3'},
+                {id:'notes',label:'笔记',icon:'notebook-pen'},
+                {id:'stats',label:'统计',icon:'bar-chart-3'},
+            ]" :key="item.id">
+                <button @click="setView(item.id)"
+                        :class="view===item.id ? 'bg-brand-500/15 text-brand-600 dark:text-brand-300' : 'hover:bg-ink-100 dark:hover:bg-ink-800'"
+                        class="w-full flex items-center gap-3 px-3 py-2 rounded-xl transition text-sm font-medium">
+                    <i :data-lucide="item.icon" class="w-4 h-4"></i>
+                    <span x-text="item.label"></span>
+                </button>
+            </template>
+            <div class="flex-1"></div>
+            <button @click="setAppPin()" class="btn-ghost w-full justify-start text-sm md:hidden">
+                <i data-lucide="shield" class="w-4 h-4"></i> 开启 PIN
+            </button>
+            <button @click="clearAppPin()" class="btn-ghost w-full justify-start text-xs text-ink-500 md:hidden">
+                <i data-lucide="shield-off" class="w-4 h-4"></i> 关闭 PIN
+            </button>
+            <button @click="logout()" class="btn-ghost w-full justify-start text-sm text-ink-500">
+                <i data-lucide="log-out" class="w-4 h-4"></i> 退出登录
+            </button>
+        </aside>
+
+        <!-- Main content -->
+        <main class="flex-1 px-4 md:px-6 pb-6 touch-pan-y"
+              @touchstart.passive="pullTouchStart($event)"
+              @touchmove="pullTouchMove($event)"
+              @touchend="pullTouchEnd()">
+
+            <!-- =============== TODAY VIEW =============== -->
+            <section x-show="view==='today'" x-transition.opacity x-data="todayView" class="max-w-3xl mx-auto pt-6 space-y-6">
+                <div class="flex items-end justify-between">
+                    <div>
+                        <h1 class="text-2xl md:text-3xl font-semibold tracking-tight">
+                            <span x-text="new Date().getHours() < 12 ? '早上好' : new Date().getHours() < 18 ? '下午好' : '晚上好'"></span>
+                        </h1>
+                        <p class="text-sm text-ink-500 dark:text-ink-400 mt-1">
+                            今天有
+                            <span class="text-brand-600 font-medium" x-text="today.todoNow.length + today.overdue.length"></span> 项待办
+                            <template x-if="today.overdue.length">
+                                <span>· <span class="text-accent-500 font-medium" x-text="today.overdue.length"></span> 项逾期</span>
+                            </template>
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Quick add inline -->
+                <form @submit.prevent="handleQuickAdd()" class="card p-3 flex items-center gap-2">
+                    <i data-lucide="plus-circle" class="w-5 h-5 text-brand-500 ml-1"></i>
+                    <input id="quickAddInline" x-model="quickAddText" type="text"
+                           placeholder='添加任务，例如 "明天下午 3 点开会"'
+                           class="flex-1 bg-transparent outline-none text-sm" />
+                    <select x-model.number="quickAddPriority" class="text-xs bg-ink-100 dark:bg-ink-800 px-2 py-1 rounded-lg border-0 outline-none">
+                        <template x-for="(label, i) in PRIORITY_LABEL" :key="i">
+                            <option :value="i" x-text="label"></option>
+                        </template>
+                    </select>
+                    <button type="submit" class="btn-primary text-xs px-3 py-1.5">添加</button>
+                </form>
+
+                <!-- Overdue -->
+                <template x-if="today.overdue.length">
+                    <div>
+                        <h2 class="text-sm font-semibold text-accent-500 mb-2 flex items-center gap-2">
+                            <i data-lucide="alert-circle" class="w-4 h-4"></i> 逾期
+                        </h2>
+                        <ul class="space-y-2">
+                            <template x-for="t in filterTasks(today.overdue)" :key="t.id">
+                                <li>
+                                    <div class="card p-3 flex items-center gap-3 group animate-fade-in"
+                                         @touchstart.passive="touchSwipeStart($event)"
+                                         @touchend.prevent="swipeTask($event, t)"
+                                         @click="showTaskDetail = t">
+                                        <input type="checkbox" :checked="t.status==='done'"
+                                               @click.stop="toggleDone(t)"
+                                               class="w-5 h-5 rounded-md accent-brand-500 cursor-pointer" />
+                                        <div class="flex-1 min-w-0">
+                                            <div class="font-medium truncate" x-text="t.title"></div>
+                                            <div class="text-xs flex items-center gap-2 mt-0.5">
+                                                <span :class="dueClass(t)" x-text="fmtTime(t.due_at)"></span>
+                                                <template x-if="t.priority>=2">
+                                                    <span class="chip" x-text="PRIORITY_LABEL[t.priority]"></span>
+                                                </template>
+                                                <template x-for="tag in t.tags" :key="tag">
+                                                    <span class="chip" x-text="'#' + tag"></span>
+                                                </template>
+                                            </div>
+                                        </div>
+                                        <button @click.stop="deleteTask(t)" class="opacity-0 group-hover:opacity-100 transition text-ink-400 hover:text-accent-500 p-1">
+                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                        </button>
+                                    </div>
+                                </li>
+                            </template>
+                        </ul>
+                    </div>
+                </template>
+
+                <!-- Today / no due -->
+                <div>
+                    <h2 class="text-sm font-semibold text-ink-700 dark:text-ink-200 mb-2 flex items-center gap-2">
+                        <i data-lucide="zap" class="w-4 h-4"></i> 今天
+                    </h2>
+                    <template x-if="today.todoNow.length">
+                        <ul class="space-y-2">
+                            <template x-for="t in filterTasks(today.todoNow)" :key="t.id">
+                                <li>
+                                    <div class="card p-3 flex items-center gap-3 group cursor-pointer hover:border-brand-400/40 transition animate-fade-in"
+                                         @touchstart.passive="touchSwipeStart($event)"
+                                         @touchend.prevent="swipeTask($event, t)"
+                                         @click="showTaskDetail = t">
+                                        <input type="checkbox" :checked="t.status==='done'"
+                                               @click.stop="toggleDone(t)"
+                                               class="w-5 h-5 rounded-md accent-brand-500 cursor-pointer" />
+                                        <div class="flex-1 min-w-0">
+                                            <div class="font-medium truncate" x-text="t.title"></div>
+                                            <div class="text-xs flex items-center gap-2 mt-0.5 text-ink-500 dark:text-ink-400">
+                                                <template x-if="t.due_at">
+                                                    <span :class="dueClass(t)" x-text="fmtTime(t.due_at)"></span>
+                                                </template>
+                                                <template x-if="t.priority>=2">
+                                                    <span class="chip" x-text="PRIORITY_LABEL[t.priority]"></span>
+                                                </template>
+                                                <template x-for="tag in t.tags" :key="tag">
+                                                    <span class="chip" x-text="'#' + tag"></span>
+                                                </template>
+                                            </div>
+                                        </div>
+                                        <button @click.stop="deleteTask(t)" class="opacity-0 group-hover:opacity-100 transition text-ink-400 hover:text-accent-500 p-1">
+                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                        </button>
+                                    </div>
+                                </li>
+                            </template>
+                        </ul>
+                    </template>
+                    <template x-if="!today.todoNow.length">
+                        <div class="card p-8 text-center text-ink-500 dark:text-ink-400 text-sm">
+                            <i data-lucide="check-check" class="w-10 h-10 mx-auto mb-2 text-brand-400"></i>
+                            今天暂无待办，享受一下空闲时间吧。
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Later -->
+                <template x-if="today.later.length">
+                    <div>
+                        <h2 class="text-sm font-semibold text-ink-500 dark:text-ink-400 mb-2 flex items-center gap-2">
+                            <i data-lucide="clock" class="w-4 h-4"></i> 之后
+                        </h2>
+                        <ul class="space-y-2">
+                            <template x-for="t in filterTasks(today.later).slice(0, 5)" :key="t.id">
+                                <li class="card p-3 flex items-center gap-3 cursor-pointer"
+                                    @touchstart.passive="touchSwipeStart($event)"
+                                    @touchend.prevent="swipeTask($event, t)"
+                                    @click="showTaskDetail = t">
+                                    <i data-lucide="circle" class="w-4 h-4 text-ink-400"></i>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="font-medium truncate" x-text="t.title"></div>
+                                        <div class="text-xs text-ink-500" x-text="fmtTime(t.due_at) + ' · ' + relativeRemaining(t.due_at)"></div>
+                                    </div>
+                                </li>
+                            </template>
+                        </ul>
+                    </div>
+                </template>
+
+                <!-- Done today -->
+                <template x-if="today.done.length">
+                    <details class="card p-3">
+                        <summary class="cursor-pointer text-sm text-ink-500 dark:text-ink-400 select-none">
+                            今日已完成 (<span x-text="today.done.length"></span>)
+                        </summary>
+                        <ul class="mt-2 space-y-1">
+                            <template x-for="t in today.done" :key="t.id">
+                                <li class="flex items-center gap-3 text-sm text-ink-500 dark:text-ink-400 line-through">
+                                    <i data-lucide="check" class="w-4 h-4 text-emerald-500"></i>
+                                    <span x-text="t.title"></span>
+                                </li>
+                            </template>
+                        </ul>
+                    </details>
+                </template>
+            </section>
+
+            <!-- =============== CALENDAR VIEW =============== -->
+            <section x-show="view==='calendar'" x-transition.opacity x-data="calendarView" class="pt-6 max-w-5xl mx-auto">
+                <div class="card p-3 md:p-4">
+                    <div x-ref="calRoot"></div>
+                </div>
+            </section>
+
+            <!-- =============== KANBAN VIEW =============== -->
+            <section x-show="view==='kanban'" x-transition.opacity x-data="kanbanView" class="pt-6">
+                <h1 class="text-2xl font-semibold tracking-tight mb-4">看板</h1>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <template x-for="col in columns" :key="col.id">
+                        <div class="card p-3 min-h-[60vh]"
+                             @dragover.prevent
+                             @drop="drop(col, $event)">
+                            <div class="flex items-center justify-between mb-3">
+                                <h3 class="font-medium" x-text="col.title"></h3>
+                                <span class="chip" x-text="col.tasks.length"></span>
+                            </div>
+                            <div class="space-y-2">
+                                <template x-for="t in col.tasks" :key="t.id">
+                                    <div draggable="true" @dragstart="dragstart(t, $event)"
+                                         @click="$dispatch('rn:open-task', t)"
+                                         class="card p-3 cursor-grab active:cursor-grabbing hover:border-brand-400/50 transition">
+                                        <div class="font-medium text-sm" x-text="t.title"></div>
+                                        <div class="text-xs text-ink-500 mt-1 flex items-center gap-2">
+                                            <template x-if="t.due_at"><span :class="dueClass(t)" x-text="fmtTime(t.due_at)"></span></template>
+                                            <template x-if="t.priority>=2"><span class="chip" x-text="PRIORITY_LABEL[t.priority]"></span></template>
+                                        </div>
+                                    </div>
+                                </template>
+                                <template x-if="!col.tasks.length">
+                                    <div class="text-xs text-ink-400 text-center py-6">拖动任务到这里</div>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </section>
+
+            <!-- =============== NOTES VIEW =============== -->
+            <section x-show="view==='notes'" x-transition.opacity x-data="notesView" class="pt-6 max-w-5xl mx-auto">
+                <div class="flex items-center justify-between mb-4 gap-3">
+                    <h1 class="text-2xl font-semibold tracking-tight">笔记</h1>
+                    <button @click="newNote()" class="btn-primary text-sm">
+                        <i data-lucide="plus" class="w-4 h-4"></i> 新建笔记
+                    </button>
+                </div>
+                <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                    <template x-for="n in filterNotes(notes)" :key="n.id">
+                        <article @click="showNoteDetail = n"
+                                 class="card p-4 cursor-pointer hover:border-brand-400/40 transition relative group">
+                            <button @click.stop="togglePin(n)" class="absolute top-3 right-3 text-ink-400 hover:text-amber-500 transition" :title="n.pinned?'取消置顶':'置顶'">
+                                <i :data-lucide="n.pinned?'pin':'pin-off'" class="w-4 h-4" :class="n.pinned?'text-amber-500':''"></i>
+                            </button>
+                            <h3 class="font-semibold pr-6 line-clamp-1" x-text="n.title || '未命名'"></h3>
+                            <p class="text-sm text-ink-500 mt-2 line-clamp-3" x-text="stripMarkdown(n.content)"></p>
+                            <div class="mt-3 flex items-center gap-2 flex-wrap">
+                                <template x-for="tag in n.tags" :key="tag">
+                                    <span class="chip" x-text="'#' + tag"></span>
+                                </template>
+                                <span class="text-xs text-ink-400 ml-auto" x-text="new Date(n.updated_at).toLocaleDateString('zh-CN')"></span>
+                            </div>
+                        </article>
+                    </template>
+                    <template x-if="!filterNotes(notes).length">
+                        <div class="card p-8 text-center text-ink-500 col-span-full">
+                            <i data-lucide="notebook" class="w-10 h-10 mx-auto mb-2 text-brand-400"></i>
+                            还没有笔记，点右上角 "新建笔记" 开始。
+                        </div>
+                    </template>
+                </div>
+            </section>
+
+            <!-- =============== STATS VIEW =============== -->
+            <section x-show="view==='stats'" x-transition.opacity x-data="statsView" class="pt-6 max-w-3xl mx-auto space-y-4">
+                <h1 class="text-2xl font-semibold tracking-tight">统计</h1>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <template x-for="(item, idx) in [
+                        {label:'总任务',value:totals.all,icon:'list-todo',color:'brand-500'},
+                        {label:'已完成',value:totals.done,icon:'check-check',color:'emerald-500'},
+                        {label:'今日',value:totals.today,icon:'sun',color:'amber-500'},
+                        {label:'逾期',value:totals.overdue,icon:'alert-circle',color:'accent-500'},
+                    ]" :key="idx">
+                        <div class="card p-4">
+                            <div class="flex items-center gap-2">
+                                <i :data-lucide="item.icon" class="w-4 h-4" :class="'text-' + item.color"></i>
+                                <span class="text-xs text-ink-500" x-text="item.label"></span>
+                            </div>
+                            <div class="text-2xl font-semibold mt-1 font-mono" x-text="item.value"></div>
+                        </div>
+                    </template>
+                </div>
+                <div class="card p-4">
+                    <h3 class="text-sm font-medium mb-3">最近 7 天</h3>
+                    <div class="flex items-end gap-2 h-32">
+                        <template x-for="d in weekData" :key="d.date">
+                            <div class="flex-1 flex flex-col items-center justify-end gap-1">
+                                <div :style="`height: ${Math.min(100, d.completed * 20)}%`" class="w-full rounded-t-md bg-gradient-to-t from-brand-600 to-brand-400 transition-all" :title="`${d.completed} 完成`"></div>
+                                <span class="text-xs text-ink-500" x-text="d.label"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+
+        <!-- Mobile bottom tab bar -->
+        <nav class="md:hidden fixed bottom-0 inset-x-0 z-30 bg-white/85 dark:bg-ink-950/85 backdrop-blur-xl border-t border-ink-200/60 dark:border-ink-800/60 flex items-center justify-around h-16 px-2"
+             style="padding-bottom: env(safe-area-inset-bottom);">
+            <template x-for="item in [
+                {id:'today',label:'今天',icon:'sun'},
+                {id:'calendar',label:'日历',icon:'calendar'},
+                {id:'kanban',label:'看板',icon:'columns-3'},
+                {id:'notes',label:'笔记',icon:'notebook-pen'},
+                {id:'stats',label:'统计',icon:'bar-chart-3'},
+            ]" :key="item.id">
+                <button @click="setView(item.id)" class="flex flex-col items-center justify-center gap-1 px-2 py-1 rounded-xl text-xs"
+                        :class="view===item.id ? 'text-brand-600 dark:text-brand-300' : 'text-ink-500'">
+                    <i :data-lucide="item.icon" class="w-5 h-5"></i>
+                    <span x-text="item.label"></span>
+                </button>
+            </template>
+        </nav>
+
+        <!-- FAB -->
+        <button @click="showQuickAdd = true; $nextTick(()=>document.getElementById('quickAddModalInput')?.focus())"
+                class="md:hidden fixed bottom-20 right-4 w-14 h-14 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-white shadow-glow active:scale-95 transition z-30 grid place-items-center"
+                style="margin-bottom: env(safe-area-inset-bottom);">
+            <i data-lucide="plus" class="w-6 h-6"></i>
+        </button>
+    </div>
+</div>
+
+<!-- ===== Quick add modal ===== -->
+<div x-show="showQuickAdd" x-transition.opacity class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm grid place-items-end md:place-items-center"
+     @click.self="showQuickAdd=false">
+    <form @submit.prevent="handleQuickAdd()"
+          class="w-full md:w-[28rem] card p-4 m-3 md:m-0 animate-slide-up">
+        <h3 class="text-sm font-medium mb-3 flex items-center gap-2">
+            <i data-lucide="plus-circle" class="w-4 h-4 text-brand-500"></i> 添加任务
+        </h3>
+        <input id="quickAddModalInput" x-model="quickAddText" type="text" autofocus
+               placeholder='例如 "明天下午 3 点开会"'
+               class="input mb-3" />
+        <div class="flex items-center gap-2">
+            <select x-model.number="quickAddPriority" class="input w-32">
+                <template x-for="(label, i) in PRIORITY_LABEL" :key="i">
+                    <option :value="i" x-text="'优先级：' + label"></option>
+                </template>
+            </select>
+            <div class="flex-1"></div>
+            <button type="button" @click="showQuickAdd=false" class="btn-ghost text-sm">取消</button>
+            <button type="submit" class="btn-primary text-sm">添加 ↵</button>
+        </div>
+    </form>
+</div>
+
+<!-- ===== Task detail drawer ===== -->
+<div x-show="showTaskDetail" x-transition.opacity class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-end md:items-center justify-end" @click.self="showTaskDetail=null">
+    <div x-show="showTaskDetail" x-transition:enter="transition" x-transition:enter-start="translate-y-full md:translate-y-0 md:translate-x-full" x-transition:enter-end="translate-y-0 md:translate-x-0"
+         class="w-full md:w-[32rem] h-[90dvh] md:h-screen bg-white dark:bg-ink-950 md:border-l border-ink-200 dark:border-ink-800 p-5 overflow-y-auto rounded-t-3xl md:rounded-none scroll-thin"
+         x-data="{ t: null }" x-effect="t = showTaskDetail ? JSON.parse(JSON.stringify(showTaskDetail)) : null">
+        <template x-if="t">
+            <div class="space-y-4">
+                <div class="flex items-center justify-between">
+                    <button @click="showTaskDetail=null" class="btn-ghost p-2"><i data-lucide="x" class="w-4 h-4"></i></button>
+                    <div class="flex gap-2">
+                        <button @click="t.status = t.status==='done'?'todo':'done'; t.completed_at = t.status==='done' ? Date.now() : null; t.updated_at = Date.now(); saveTask(t); showTaskDetail = {...t}"
+                                class="btn-ghost text-xs">
+                            <i :data-lucide="t.status==='done'?'rotate-ccw':'check'" class="w-4 h-4"></i>
+                            <span x-text="t.status==='done' ? '取消完成' : '标记完成'"></span>
+                        </button>
+                        <button @click="deleteTask(t)" class="btn-ghost text-xs text-accent-500">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i> 删除
+                        </button>
+                    </div>
+                </div>
+                <input x-model="t.title" @change="t.updated_at = Date.now(); saveTask(t)" class="input text-lg font-semibold" />
+
+                <div class="grid grid-cols-2 gap-2">
+                    <label class="text-xs text-ink-500 col-span-2 md:col-span-1">
+                        <span>截止时间</span>
+                        <input type="datetime-local"
+                               :value="t.due_at ? new Date(t.due_at - new Date().getTimezoneOffset() * 60000).toISOString().slice(0,16) : ''"
+                               @change="t.due_at = $event.target.value ? new Date($event.target.value).getTime() : null; t.updated_at = Date.now(); saveTask(t)"
+                               class="input mt-1" />
+                    </label>
+                    <label class="text-xs text-ink-500 col-span-2 md:col-span-1">
+                        <span>优先级</span>
+                        <select x-model.number="t.priority" @change="t.updated_at = Date.now(); saveTask(t)" class="input mt-1">
+                            <template x-for="(label, i) in PRIORITY_LABEL" :key="i">
+                                <option :value="i" x-text="label"></option>
+                            </template>
+                        </select>
+                    </label>
+                    <label class="text-xs text-ink-500 col-span-2 md:col-span-1">
+                        <span>提醒时间</span>
+                        <input type="datetime-local"
+                               :value="t.remind_at ? new Date(t.remind_at - new Date().getTimezoneOffset() * 60000).toISOString().slice(0,16) : ''"
+                               @change="t.remind_at = $event.target.value ? new Date($event.target.value).getTime() : null; t.updated_at = Date.now(); saveTask(t)"
+                               class="input mt-1" />
+                    </label>
+                    <label class="text-xs text-ink-500 col-span-2 md:col-span-1">
+                        <span>重复</span>
+                        <select class="input mt-1"
+                                :value="repeatPreset(t)"
+                                @change="applyRepeatPreset(t, $event.target.value)">
+                            <option value="">不重复</option>
+                            <option value="daily">每天</option>
+                            <option value="weekdays">工作日</option>
+                            <option value="weekly">每周</option>
+                        </select>
+                    </label>
+                </div>
+
+                <label class="text-xs text-ink-500 block">
+                    <span>标签 (用逗号分隔)</span>
+                    <input :value="(t.tags || []).join(', ')"
+                           @change="t.tags = $event.target.value.split(',').map(s=>s.trim()).filter(Boolean); t.updated_at = Date.now(); saveTask(t)"
+                           class="input mt-1" />
+                </label>
+
+                <div>
+                    <div class="text-xs text-ink-500 mb-1 flex items-center justify-between">
+                        <span>子任务</span>
+                        <button @click="t.subtasks = [...(t.subtasks||[]), { id: newSubtaskId(), text:'', done:false }]" class="text-brand-500 text-xs">+ 添加</button>
+                    </div>
+                    <ul class="space-y-1">
+                        <template x-for="(s, idx) in t.subtasks || []" :key="s.id || idx">
+                            <li class="flex items-center gap-2">
+                                <input type="checkbox" x-model="s.done" @change="t.updated_at = Date.now(); saveTask(t)" class="w-4 h-4 accent-brand-500" />
+                                <input x-model="s.text" @change="t.updated_at = Date.now(); saveTask(t)"
+                                       :class="s.done ? 'line-through text-ink-400' : ''"
+                                       class="input flex-1 py-1 text-sm" />
+                                <button @click="t.subtasks = t.subtasks.filter((_, i) => i !== idx); t.updated_at = Date.now(); saveTask(t)" class="text-ink-400 hover:text-accent-500">
+                                    <i data-lucide="x" class="w-4 h-4"></i>
+                                </button>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
+
+                <label class="text-xs text-ink-500 block">
+                    <span>备注 (Markdown)</span>
+                    <textarea x-model="t.notes" rows="6"
+                              @change="t.updated_at = Date.now(); saveTask(t)"
+                              class="input mt-1 font-mono text-sm"></textarea>
+                </label>
+                <div x-show="t.notes" class="prose prose-sm dark:prose-invert max-w-none border-t border-ink-200 dark:border-ink-800 pt-3" x-html="renderMarkdown(t.notes)"></div>
+            </div>
+        </template>
+    </div>
+</div>
+
+<!-- ===== Note detail drawer ===== -->
+<div x-show="showNoteDetail" x-transition.opacity class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-end md:items-center justify-end" @click.self="showNoteDetail=null">
+    <div x-show="showNoteDetail" x-transition:enter="transition" x-transition:enter-start="translate-y-full md:translate-y-0 md:translate-x-full" x-transition:enter-end="translate-y-0 md:translate-x-0"
+         class="w-full md:w-[40rem] h-[90dvh] md:h-screen bg-white dark:bg-ink-950 md:border-l border-ink-200 dark:border-ink-800 p-5 overflow-y-auto rounded-t-3xl md:rounded-none scroll-thin"
+         x-data="{ n: null, preview: false }"
+         x-effect="n = showNoteDetail ? JSON.parse(JSON.stringify(showNoteDetail)) : null">
+        <template x-if="n">
+            <div class="space-y-4">
+                <div class="flex items-center justify-between gap-2">
+                    <button @click="showNoteDetail=null" class="btn-ghost p-2"><i data-lucide="x" class="w-4 h-4"></i></button>
+                    <div class="flex gap-2 items-center">
+                        <button @click="preview = !preview" class="btn-ghost text-xs">
+                            <i :data-lucide="preview?'pen-line':'eye'" class="w-4 h-4"></i>
+                            <span x-text="preview?'编辑':'预览'"></span>
+                        </button>
+                        <button @click="n.pinned = !n.pinned; n.updated_at = Date.now(); saveNote(n); showNoteDetail = {...n}" class="btn-ghost text-xs" :class="n.pinned?'text-amber-500':''">
+                            <i :data-lucide="n.pinned?'pin':'pin-off'" class="w-4 h-4"></i>
+                            <span x-text="n.pinned?'已置顶':'置顶'"></span>
+                        </button>
+                        <button @click="deleteNote(n)" class="btn-ghost text-xs text-accent-500">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+                <input x-model="n.title" @change="n.updated_at = Date.now(); saveNote(n)" class="input text-xl font-semibold" placeholder="标题" />
+                <label class="text-xs text-ink-500 block">
+                    <span>标签 (用逗号分隔)</span>
+                    <input :value="(n.tags || []).join(', ')"
+                           @change="n.tags = $event.target.value.split(',').map(s=>s.trim()).filter(Boolean); n.updated_at = Date.now(); saveNote(n)"
+                           class="input mt-1" />
+                </label>
+                <template x-if="!preview">
+                    <textarea x-model="n.content" rows="20" @change="n.updated_at = Date.now(); saveNote(n)"
+                              class="input font-mono text-sm leading-relaxed"></textarea>
+                </template>
+                <template x-if="preview">
+                    <div class="prose prose-sm dark:prose-invert max-w-none border border-ink-200 dark:border-ink-800 rounded-xl p-4" x-html="renderMarkdown(n.content)"></div>
+                </template>
+            </div>
+        </template>
+    </div>
+</div>
+
+<!-- PIN gate -->
+<div x-show="pinLocked" x-cloak class="fixed inset-0 z-[100] bg-ink-950/90 backdrop-blur-md flex items-center justify-center p-6"
+     @keydown.escape.prevent>
+    <div class="card max-w-sm w-full p-6 space-y-4 text-center">
+        <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 mx-auto grid place-items-center">
+            <i data-lucide="lock" class="w-6 h-6 text-white"></i>
+        </div>
+        <h2 class="text-lg font-semibold">请输入应用 PIN</h2>
+        <input type="password" inputmode="numeric" maxlength="16" autocomplete="off" x-model="pinInput"
+               @keyup.enter="verifyAppPin()"
+               placeholder="••••"
+               class="input text-center text-lg tracking-[0.3em]" />
+        <button type="button" class="btn-primary w-full justify-center" @click="verifyAppPin()">解锁</button>
+    </div>
+</div>
+
+<!-- ===== Command palette ===== -->
+<div x-show="showCommand" x-transition.opacity class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm grid place-items-start pt-32" @click.self="showCommand=false">
+    <div class="card w-[90%] md:w-[36rem] p-2 mx-auto animate-slide-up"
+         x-data="{ q:'', actions: [
+            {label:'切到 今天',  go() { document.location.hash = '#today'; }, icon:'sun'},
+            {label:'切到 日历',  go() { document.location.hash = '#calendar'; }, icon:'calendar'},
+            {label:'切到 看板',  go() { document.location.hash = '#kanban'; }, icon:'columns-3'},
+            {label:'切到 笔记',  go() { document.location.hash = '#notes'; }, icon:'notebook-pen'},
+            {label:'切到 统计',  go() { document.location.hash = '#stats'; }, icon:'bar-chart-3'},
+            {label:'切换主题',   go() { window.dispatchEvent(new CustomEvent('rn:cycle-theme')); }, icon:'palette'},
+            {label:'立即同步',   go() { window.dispatchEvent(new CustomEvent('rn:sync-now')); }, icon:'refresh-cw'},
+         ] }">
+        <div class="flex items-center gap-2 px-3 py-2">
+            <i data-lucide="search" class="w-4 h-4 text-ink-400"></i>
+            <input x-model="q" autofocus placeholder="输入命令..." class="bg-transparent flex-1 outline-none text-sm" />
+            <kbd class="text-xs text-ink-400">Esc</kbd>
+        </div>
+        <ul class="max-h-80 overflow-auto scroll-thin">
+            <template x-for="a in actions.filter(x => !q || x.label.toLowerCase().includes(q.toLowerCase()))" :key="a.label">
+                <li>
+                    <button @click="a.go(); showCommand = false"
+                            class="w-full flex items-center gap-3 px-3 py-2 text-sm hover:bg-ink-100 dark:hover:bg-ink-800 rounded-xl">
+                        <i :data-lucide="a.icon" class="w-4 h-4 text-ink-500"></i>
+                        <span x-text="a.label"></span>
+                    </button>
+                </li>
+            </template>
+        </ul>
+    </div>
+</div>
+
+<!-- App entry point -->
+<script type="module" src="dist/app.js"></script>
+
+</body>
+</html>

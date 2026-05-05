@@ -1,0 +1,33 @@
+# Dependencies
+/vendor/
+/node_modules/
+
+# Local config & secrets
+/config/config.php
+/.env
+
+# Database & user data
+/data/*.db
+/data/*.db-journal
+/data/*.db-wal
+/data/*.db-shm
+/public/uploads/*
+!/public/uploads/.gitkeep
+
+# Build output
+/public/css/style.css
+/public/css/style.css.map
+/public/dist/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Logs
+*.log
+/logs/
+/router-debug.log
+/server.log

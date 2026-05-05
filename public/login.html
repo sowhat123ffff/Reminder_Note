@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a0a0b" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#fafaf9" media="(prefers-color-scheme: light)" />
+    <title>登录 · Reminder Note</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="assets/icons/icon.svg" />
+    <link rel="stylesheet" href="css/style.css" />
+</head>
+<body class="min-h-screen bg-ink-50 text-ink-900 dark:bg-ink-950 dark:text-ink-50 antialiased font-sans">
+    <main class="min-h-screen grid place-items-center px-4">
+        <div class="w-full max-w-md">
+            <div class="text-center mb-8">
+                <div class="mx-auto w-14 h-14 rounded-2xl bg-gradient-to-br from-brand-400 to-brand-700 grid place-items-center shadow-glow">
+                    <span class="text-white text-2xl">RN</span>
+                </div>
+                <h1 class="mt-4 text-2xl font-semibold tracking-tight">Reminder Note</h1>
+                <p class="mt-1 text-sm text-ink-500 dark:text-ink-400">登录你的私人备忘空间</p>
+            </div>
+
+            <form id="loginForm" class="rounded-3xl bg-white/80 dark:bg-ink-900/70 backdrop-blur shadow-soft p-6 space-y-4 border border-ink-200/60 dark:border-ink-800/60">
+                <label class="block">
+                    <span class="text-xs font-medium text-ink-500 dark:text-ink-400">用户名</span>
+                    <input id="username" name="username" type="text" autocomplete="username" required
+                        class="mt-1 w-full rounded-xl border border-ink-200 dark:border-ink-700 bg-white dark:bg-ink-950 px-4 py-3 outline-none focus:ring-2 focus:ring-brand-400 transition" />
+                </label>
+                <label class="block">
+                    <span class="text-xs font-medium text-ink-500 dark:text-ink-400">密码</span>
+                    <input id="password" name="password" type="password" autocomplete="current-password" required
+                        class="mt-1 w-full rounded-xl border border-ink-200 dark:border-ink-700 bg-white dark:bg-ink-950 px-4 py-3 outline-none focus:ring-2 focus:ring-brand-400 transition" />
+                </label>
+
+                <button id="submitBtn" type="submit"
+                    class="w-full rounded-xl bg-gradient-to-r from-brand-500 to-brand-700 hover:from-brand-400 hover:to-brand-600 active:scale-[0.99] transition text-white font-medium py-3 shadow-glow disabled:opacity-60 disabled:cursor-not-allowed">
+                    <span id="submitLabel">登录</span>
+                </button>
+
+                <p id="errorMsg" class="hidden text-sm text-accent-500 text-center"></p>
+            </form>
+
+            <p class="mt-6 text-center text-xs text-ink-500 dark:text-ink-400">
+                默认账户：<code class="px-1 py-0.5 rounded bg-ink-100 dark:bg-ink-800">jian / 123456</code>
+                · 部署后请尽快修改
+            </p>
+        </div>
+    </main>
+
+    <script>
+        const f = document.getElementById('loginForm');
+        const errorEl = document.getElementById('errorMsg');
+        const btn = document.getElementById('submitBtn');
+        const label = document.getElementById('submitLabel');
+
+        const API_BASE = (() => {
+            const path = location.pathname;
+            const idx = path.indexOf('/public/');
+            if (idx >= 0) return path.slice(0, idx + 8) + 'api';
+            const lastSlash = path.lastIndexOf('/');
+            const base = lastSlash > 0 ? path.slice(0, lastSlash + 1) : '/';
+            return (base.endsWith('/') ? base : base + '/') + 'api';
+        })();
+
+        function showError(msg) {
+            errorEl.textContent = msg;
+            errorEl.classList.remove('hidden');
+        }
+
+        f.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            errorEl.classList.add('hidden');
+            btn.disabled = true; label.textContent = '登录中…';
+            try {
+                const res = await fetch(API_BASE + '/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: document.getElementById('username').value,
+                        password: document.getElementById('password').value,
+                    }),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data?.error?.message || '登录失败');
+                }
+                localStorage.setItem('rn:accessToken', data.accessToken);
+                localStorage.setItem('rn:refreshToken', data.refreshToken);
+                localStorage.setItem('rn:accessExp', String(data.accessExpiresAt));
+                localStorage.setItem('rn:refreshExp', String(data.refreshExpiresAt));
+                location.href = './index.html';
+            } catch (err) {
+                showError(err.message || '网络错误');
+            } finally {
+                btn.disabled = false; label.textContent = '登录';
+            }
+        });
+
+        if (localStorage.getItem('rn:accessToken') && Number(localStorage.getItem('rn:accessExp') || 0) > Date.now()) {
+            location.replace('./index.html');
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    --rn-bg: #fafaf9;
+    --rn-fg: #15140f;
+    --rn-brand: oklch(70% 0.18 280);
+    --rn-accent: oklch(75% 0.20 25);
+}
+
+.dark {
+    --rn-bg: #0a0a0b;
+    --rn-fg: #fafaf9;
+}
+
+html, body {
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+::selection { background: rgba(124, 77, 255, 0.25); }
+
+@layer components {
+    .glass {
+        @apply bg-white/70 dark:bg-ink-900/60 backdrop-blur-xl border border-white/40 dark:border-ink-800/60 shadow-soft;
+    }
+    .btn {
+        @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-medium transition active:scale-[0.98];
+    }
+    .btn-primary {
+        @apply btn text-white bg-gradient-to-r from-brand-500 to-brand-700 hover:from-brand-400 hover:to-brand-600 shadow-glow;
+    }
+    .btn-ghost {
+        @apply btn text-ink-700 dark:text-ink-200 hover:bg-ink-100 dark:hover:bg-ink-800;
+    }
+    .input {
+        @apply w-full rounded-xl border border-ink-200 dark:border-ink-700 bg-white dark:bg-ink-950 px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400 transition;
+    }
+    .card {
+        @apply rounded-2xl bg-white dark:bg-ink-900 border border-ink-200/70 dark:border-ink-800 shadow-soft;
+    }
+    .chip {
+        @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-ink-100 dark:bg-ink-800 text-ink-700 dark:text-ink-200;
+    }
+}
+
+/* Hide scrollbars on touch but keep on hover */
+.scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+.scroll-thin::-webkit-scrollbar-thumb { background: rgba(120,120,120,.35); border-radius: 4px; }

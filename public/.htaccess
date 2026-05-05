@@ -1,0 +1,38 @@
+# SPA + API routing for Apache (XAMPP local dev)
+RewriteEngine On
+RewriteBase /Reminder_Note/public/
+
+# Disallow PHP execution inside uploads/
+<Directory "uploads">
+    php_flag engine off
+</Directory>
+
+# API entry point
+RewriteCond %{REQUEST_URI} ^/Reminder_Note/public/api/
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^api/(.*)$ api/index.php [L,QSA]
+
+# SPA fallback - serve index.html for non-existing files (excluding api & uploads)
+RewriteCond %{REQUEST_URI} !^/Reminder_Note/public/api/
+RewriteCond %{REQUEST_URI} !^/Reminder_Note/public/uploads/
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.html [L]
+
+# Security headers (Apache 2.4+)
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "DENY"
+    Header set Referrer-Policy "same-origin"
+</IfModule>
+
+# Cache static assets
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css "access plus 7 days"
+    ExpiresByType application/javascript "access plus 7 days"
+    ExpiresByType image/png "access plus 30 days"
+    ExpiresByType image/svg+xml "access plus 30 days"
+    ExpiresByType font/woff2 "access plus 30 days"
+</IfModule>

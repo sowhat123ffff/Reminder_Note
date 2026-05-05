@@ -1,0 +1,26 @@
+{
+    "name": "nothingaming/reminder-note",
+    "description": "Personal reminder + notes PWA (PHP 8 + SQLite)",
+    "type": "project",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.1",
+        "ext-pdo": "*",
+        "ext-pdo_sqlite": "*",
+        "ext-mbstring": "*",
+        "ext-json": "*",
+        "firebase/php-jwt": "^6.10",
+        "ramsey/uuid": "^4.7"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "app/",
+            "App\\Controllers\\": "app/controllers/",
+            "App\\Helpers\\": "app/helpers/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}

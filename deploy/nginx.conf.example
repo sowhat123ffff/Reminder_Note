@@ -1,0 +1,49 @@
+##
+## Reminder Note — Nginx + PHP-FPM (production)
+##
+## Deploy path: /var/www/Reminder_Note
+## Site: note.nothingaming.com
+##
+server {
+    listen 80;
+    listen [::]:80;
+    server_name note.nothingaming.com;
+    root /var/www/Reminder_Note/public;
+    index index.html;
+
+    add_header X-Content-Type-Options nosniff;
+    add_header X-Frame-Options DENY;
+    add_header Referrer-Policy same-origin;
+
+    gzip on;
+    client_max_body_size 20m;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location ^~ /api/ {
+        try_files $uri /api/index.php?$query_string;
+    }
+
+    location = /api/index.php {
+        include fastcgi_params;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root/api/index.php;
+    }
+
+    location ^~ /uploads/ {
+        location ~ \.php$ { deny all; }
+    }
+
+    location ~* \.(?:css|js|mjs|woff2|png|jpg|webp|svg|ico|webmanifest)$ {
+        expires 7d;
+        access_log off;
+    }
+
+    # After certbot SSL, move listen 443 + ssl_certificate here or use snippets.
+    # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    ## Optional CSP (relax if hosting third-party assets):
+    ## add_header Content-Security-Policy "default-src 'self'; script-src 'self'; script-src-elem 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'" always;
+}
