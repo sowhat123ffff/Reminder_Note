@@ -128,7 +128,7 @@ final class NoteController
         foreach (['title','content'] as $f) {
             if (array_key_exists($f, $data)) {
                 $set[] = "{$f} = :{$f}";
-                $args[":{$f}"] = $data[$f];
+                $args[":{$f}"] = $data[$f] === null ? '' : $data[$f];
             }
         }
         if (array_key_exists('tags', $data)) {

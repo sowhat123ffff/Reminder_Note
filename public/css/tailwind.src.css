@@ -19,6 +19,8 @@ html, body {
     -webkit-tap-highlight-color: transparent;
 }
 
+[x-cloak] { display: none !important; }
+
 ::selection { background: rgba(124, 77, 255, 0.25); }
 
 @layer components {
@@ -43,6 +45,17 @@ html, body {
     .chip {
         @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-ink-100 dark:bg-ink-800 text-ink-700 dark:text-ink-200;
     }
+    /* Priority left-edge accent bar for task cards (added via x-bind:class). */
+    .priority-edge {
+        @apply relative;
+    }
+    .priority-edge::before {
+        content: '';
+        @apply absolute left-0 top-2 bottom-2 w-1 rounded-r-md;
+    }
+    .priority-1::before { @apply bg-brand-400/60; }
+    .priority-2::before { @apply bg-amber-500/80; }
+    .priority-3::before { @apply bg-accent-500; }
 }
 
 /* Hide scrollbars on touch but keep on hover */

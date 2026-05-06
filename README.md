@@ -23,6 +23,15 @@ php deploy/hash.php "your-new-password"
 
 …then paste the resulting hash into `config/config.php` (`password_hash`) and rotate `jwt_secret`.
 
+### Standalone PHP dev server (no Apache)
+
+```
+php -S 127.0.0.1:8765 dev-router.php
+```
+
+Then visit `http://127.0.0.1:8765/login.html`. Run the API smoke test with
+`php deploy/api-smoke.php http://127.0.0.1:8765`.
+
 ## Production (Linux + Nginx)
 
 ```

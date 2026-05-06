@@ -2,6 +2,10 @@ import Alpine from 'alpinejs';
 import { createIcons, icons } from 'lucide';
 import confetti from 'canvas-confetti';
 import zhCn from '@fullcalendar/core/locales/zh-cn.js';
+import { Calendar } from '@fullcalendar/core';
+import dayGrid from '@fullcalendar/daygrid';
+import timeGrid from '@fullcalendar/timegrid';
+import interaction from '@fullcalendar/interaction';
 
 import { api, isAuthenticated, clearTokens } from './api.js';
 import { Tasks, Notes } from './db-local.js';
@@ -17,7 +21,7 @@ if (!isAuthenticated()) {
 
 window.Alpine = Alpine;
 
-const VIEWS = ['today', 'calendar', 'kanban', 'notes', 'stats'];
+const VIEWS = ['today', 'calendar', 'kanban', 'notes', 'stats', 'trash'];
 const PRIORITY_LABEL = ['低', '中', '高', '紧急'];
 const PRIORITY_COLOR = ['ink-400', 'brand-500', 'amber-500', 'accent-500'];
 
@@ -67,12 +71,45 @@ function dispatchSyncNow() {
     window.dispatchEvent(new CustomEvent('rn:sync-now'));
 }
 
+/**
+ * Compute next due timestamp for a recurring task.
+ * Supports rule shapes: 'daily' | 'weekdays' | 'weekly' (string or {type}).
+ * Falls back to null if no rule, no due_at, or unknown type.
+ */
+function nextOccurrence(task) {
+    if (!task?.repeat_rule || !task.due_at) return null;
+    let type = '';
+    try {
+        const v = typeof task.repeat_rule === 'string' ? JSON.parse(task.repeat_rule) : task.repeat_rule;
+        type = (v && typeof v === 'object') ? String(v.type || '') : String(v || '');
+    } catch {
+        type = typeof task.repeat_rule === 'string' ? task.repeat_rule : '';
+    }
+    if (!type) return null;
+    const base = new Date(task.due_at);
+    if (type === 'daily') {
+        base.setDate(base.getDate() + 1);
+        return base.getTime();
+    }
+    if (type === 'weekly') {
+        base.setDate(base.getDate() + 7);
+        return base.getTime();
+    }
+    if (type === 'weekdays') {
+        do { base.setDate(base.getDate() + 1); } while (base.getDay() === 0 || base.getDay() === 6);
+        return base.getTime();
+    }
+    return null;
+}
+
 Alpine.data('appShell', () => ({
     view: 'today',
     sidebarOpen: false,
     online: navigator.onLine,
     syncing: false,
     syncMessage: '',
+    syncError: false,
+    justBackOnline: false,
     pullDistance: 0,
     pullActive: false,
     _pullStartY: null,
@@ -84,6 +121,8 @@ Alpine.data('appShell', () => ({
     showNoteDetail: null,
     pinLocked: false,
     pinInput: '',
+    pinModal: { open: false, mode: 'set', input1: '', input2: '', error: '' },
+    confirmDialog: { open: false, title: '', message: '', confirmLabel: '', cancelLabel: '', danger: false, _resolve: null },
     today: { all: [], overdue: [], todoNow: [], later: [], done: [] },
     notes: [],
     allTasks: [],
@@ -120,7 +159,7 @@ Alpine.data('appShell', () => ({
         this.bindGlobalShortcuts();
         window.addEventListener('rn:cycle-theme', () => { this.theme = cycleTheme(); });
         window.addEventListener('rn:sync-now', () => { this.runSync(); });
-        await ensureNotifyPermission();
+        ensureNotifyPermission().catch(() => {});
 
         const initialView = (location.hash || '#today').slice(1);
         if (VIEWS.includes(initialView)) this.view = initialView;
@@ -134,8 +173,16 @@ Alpine.data('appShell', () => ({
             }
         });
 
-        window.addEventListener('online', () => { this.online = true; this.runSync(); });
-        window.addEventListener('offline', () => { this.online = false; });
+        window.addEventListener('online', () => {
+            this.online = true;
+            this.justBackOnline = true;
+            setTimeout(() => { this.justBackOnline = false; }, 3500);
+            this.runSync();
+        });
+        window.addEventListener('offline', () => {
+            this.online = false;
+            this.justBackOnline = false;
+        });
 
         await this.refreshAll();
         startAutoSync(5 * 60_000, async (result) => {
@@ -195,18 +242,22 @@ Alpine.data('appShell', () => ({
     async runSync() {
         if (this.syncing) return;
         this.syncing = true;
+        this.syncError = false;
         const result = await syncNow();
         this.syncing = false;
         if (result?.error === 'unauthorized') {
             clearTokens(); location.replace('./login.html'); return;
         }
         if (result?.online === false) {
-            this.syncMessage = '离线模式';
+            this.syncMessage = '离线模式 · 同步将于网络恢复后进行';
+            this.syncError = false;
         } else if (result?.error) {
             this.syncMessage = '同步失败：' + result.error;
+            this.syncError = true;
         } else {
             this.syncMessage = '已同步';
-            setTimeout(() => this.syncMessage = '', 1500);
+            this.syncError = false;
+            setTimeout(() => { if (this.syncMessage === '已同步') this.syncMessage = ''; }, 1500);
         }
         await this.refreshAll();
     },
@@ -264,25 +315,77 @@ Alpine.data('appShell', () => ({
         this.pinInput = '';
     },
 
-    async setAppPin() {
-        const a = prompt('设置 4～8 位应用 PIN（仅存在本浏览器）');
-        if (!a || a.length < 4 || a.length > 8) { alert('PIN 长度为 4～8'); return; }
-        const b = prompt('再次输入 PIN 确认');
-        if (a !== b) { alert('两次不一致'); return; }
-        localStorage.setItem(PIN_STORAGE, await digestPin(a));
-        alert('PIN 已启用，下次打开页面需要验证');
-        location.reload();
+    setAppPin() {
+        this.pinModal = { open: true, mode: 'set', input1: '', input2: '', error: '' };
+        this.$nextTick(() => createIcons({ icons }));
     },
 
-    async clearAppPin() {
-        const cur = prompt('请输入当前 PIN 以关闭应用锁');
-        if (!cur) return;
+    clearAppPin() {
         const stored = localStorage.getItem(PIN_STORAGE);
-        if (!stored) { return; }
-        if ((await digestPin(cur)) !== stored) { alert('PIN 不正确'); return; }
-        localStorage.removeItem(PIN_STORAGE);
-        alert('应用锁已关闭');
-        this.pinLocked = false;
+        if (!stored) {
+            this.flash('当前未启用 PIN');
+            return;
+        }
+        this.pinModal = { open: true, mode: 'clear', input1: '', input2: '', error: '' };
+        this.$nextTick(() => createIcons({ icons }));
+    },
+
+    closePinModal() {
+        this.pinModal = { open: false, mode: 'set', input1: '', input2: '', error: '' };
+    },
+
+    async submitPinModal() {
+        const { mode, input1, input2 } = this.pinModal;
+        if (mode === 'set') {
+            const a = (input1 || '').trim();
+            const b = (input2 || '').trim();
+            if (!a || a.length < 4 || a.length > 8) {
+                this.pinModal.error = 'PIN 长度需为 4～8 位';
+                return;
+            }
+            if (a !== b) {
+                this.pinModal.error = '两次输入不一致';
+                return;
+            }
+            localStorage.setItem(PIN_STORAGE, await digestPin(a));
+            this.closePinModal();
+            this.flash('PIN 已启用，下次打开页面需要验证');
+            return;
+        }
+        if (mode === 'clear') {
+            const cur = (input1 || '').trim();
+            const stored = localStorage.getItem(PIN_STORAGE);
+            if (!stored) { this.closePinModal(); return; }
+            if ((await digestPin(cur)) !== stored) {
+                this.pinModal.error = 'PIN 不正确';
+                return;
+            }
+            localStorage.removeItem(PIN_STORAGE);
+            this.pinLocked = false;
+            this.closePinModal();
+            this.flash('应用锁已关闭');
+        }
+    },
+
+    confirm(message, options = {}) {
+        return new Promise((resolve) => {
+            this.confirmDialog = {
+                open: true,
+                title: options.title || '确认操作',
+                message: String(message || ''),
+                confirmLabel: options.confirmLabel || '确认',
+                cancelLabel: options.cancelLabel || '取消',
+                danger: !!options.danger,
+                _resolve: resolve,
+            };
+            this.$nextTick(() => createIcons({ icons }));
+        });
+    },
+
+    resolveConfirm(value) {
+        const r = this.confirmDialog._resolve;
+        this.confirmDialog = { open: false, title: '', message: '', confirmLabel: '', cancelLabel: '', danger: false, _resolve: null };
+        if (typeof r === 'function') r(!!value);
     },
 
     newSubtaskId() {
@@ -299,7 +402,16 @@ Alpine.data('appShell', () => ({
 
     bindGlobalShortcuts() {
         window.addEventListener('keydown', (e) => {
-            if (e.target?.matches?.('input,textarea,[contenteditable]') && !(e.metaKey || e.ctrlKey)) return;
+            const inField = e.target?.matches?.('input,textarea,[contenteditable]');
+            if (e.key === 'Escape') {
+                if (inField && e.target?.blur) e.target.blur();
+                this.showCommand = false;
+                this.showQuickAdd = false;
+                this.showTaskDetail = null;
+                this.showNoteDetail = null;
+                return;
+            }
+            if (inField && !(e.metaKey || e.ctrlKey)) return;
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
                 e.preventDefault(); this.showCommand = true;
             } else if (e.key === 'n' && !e.metaKey && !e.ctrlKey) {
@@ -308,11 +420,6 @@ Alpine.data('appShell', () => ({
             } else if (e.key === '/' && !e.metaKey && !e.ctrlKey) {
                 e.preventDefault();
                 document.getElementById('topSearch')?.focus();
-            } else if (e.key === 'Escape') {
-                this.showCommand = false;
-                this.showQuickAdd = false;
-                this.showTaskDetail = null;
-                this.showNoteDetail = null;
             }
         });
     },
@@ -335,17 +442,43 @@ Alpine.data('appShell', () => ({
     },
 
     async toggleDone(task) {
+        const wasDone = task.status === 'done';
         const updated = await Tasks.toggle(task.id);
-        if (updated?.status === 'done') {
+        if (updated?.status === 'done' && !wasDone) {
             confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
             try { navigator.vibrate?.(40); } catch {}
+            const next = nextOccurrence(updated);
+            if (next) {
+                const clone = { ...updated };
+                delete clone.id;
+                clone.status = 'todo';
+                clone.completed_at = null;
+                clone.deleted_at = null;
+                clone.due_at = next;
+                clone.remind_at = updated.remind_at && updated.due_at
+                    ? next - (updated.due_at - updated.remind_at)
+                    : null;
+                clone.subtasks = (updated.subtasks || []).map(s => ({ ...s, done: false }));
+                clone.created_at = Date.now();
+                clone.updated_at = Date.now();
+                await Tasks.upsert(clone);
+                // Detach repeat rule from the now-completed instance so toggling
+                // it back to todo and re-completing does not spawn a duplicate.
+                await Tasks.upsert({ ...updated, repeat_rule: null, updated_at: Date.now() });
+                this.flash('已生成下一次重复任务');
+            }
         }
         dispatchSyncNow();
         await this.refreshAll();
     },
 
     async deleteTask(task) {
-        if (!confirm(`删除任务「${task.title}」？`)) return;
+        const ok = await this.confirm(`删除任务「${task.title}」？\n\n可在“回收站”视图恢复或彻底清除。`, {
+            title: '删除任务',
+            confirmLabel: '删除',
+            danger: true,
+        });
+        if (!ok) return;
         await Tasks.softDelete(task.id);
         this.showTaskDetail = null;
         dispatchSyncNow();
@@ -372,7 +505,12 @@ Alpine.data('appShell', () => ({
     },
 
     async deleteNote(note) {
-        if (!confirm(`删除笔记「${note.title}」？`)) return;
+        const ok = await this.confirm(`删除笔记「${note.title || '未命名'}」？\n\n可在“回收站”视图恢复或彻底清除。`, {
+            title: '删除笔记',
+            confirmLabel: '删除',
+            danger: true,
+        });
+        if (!ok) return;
         await Notes.softDelete(note.id);
         this.showNoteDetail = null;
         dispatchSyncNow();
@@ -385,9 +523,68 @@ Alpine.data('appShell', () => ({
         await this.refreshAll();
     },
 
+    async toggleFavorite(note) {
+        await Notes.upsert({ ...note, favorite: !note.favorite });
+        dispatchSyncNow();
+        await this.refreshAll();
+    },
+
     flash(msg) {
         this.syncMessage = msg;
         setTimeout(() => { if (this.syncMessage === msg) this.syncMessage = ''; }, 1800);
+    },
+
+    async exportData() {
+        const tasks = await Tasks.list({ includeDeleted: true });
+        const notes = await Notes.list();
+        const payload = {
+            kind: 'reminder-note-backup',
+            version: 1,
+            exportedAt: Date.now(),
+            tasks,
+            notes,
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `reminder-note-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+        this.flash(`已导出 ${tasks.length} 任务 + ${notes.length} 笔记`);
+    },
+
+    async importData(file) {
+        if (!file) return;
+        try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+            if (!data || data.kind !== 'reminder-note-backup') {
+                this.flash('文件格式不正确（不是 Reminder Note 备份）');
+                return;
+            }
+            const taskCount = Array.isArray(data.tasks) ? data.tasks.length : 0;
+            const noteCount = Array.isArray(data.notes) ? data.notes.length : 0;
+            const ok = await this.confirm(
+                `将导入 ${taskCount} 个任务 + ${noteCount} 个笔记。\n\n冲突时按更新时间合并(更新者胜)。继续吗?`,
+                { title: '导入备份', confirmLabel: '导入' },
+            );
+            if (!ok) return;
+            for (const t of data.tasks || []) {
+                await Tasks.upsert(t);
+            }
+            for (const n of data.notes || []) {
+                await Notes.upsert(n);
+            }
+            dispatchSyncNow();
+            await this.refreshAll();
+            this.flash(`导入完成：${taskCount} 任务 + ${noteCount} 笔记`);
+        } catch (err) {
+            console.error('[import] failed', err);
+            this.flash('导入失败：' + (err?.message || err));
+        }
     },
 
     cycleTheme() { this.theme = cycleTheme(); },
@@ -425,8 +622,77 @@ Alpine.data('todayView', () => ({
     },
 }));
 
+Alpine.data('trashView', () => ({
+    deletedTasks: [],
+    deletedNotes: [],
+    _reloadListener: null,
+    async init() {
+        await this.reload();
+        this._reloadListener = () => this.reload();
+        window.addEventListener('rn:refresh-views', this._reloadListener);
+    },
+    destroy() {
+        window.removeEventListener('rn:refresh-views', this._reloadListener);
+    },
+    async reload() {
+        this.deletedTasks = await Tasks.listDeleted();
+        this.deletedNotes = await Notes.listDeleted();
+        this.$nextTick(() => createIcons({ icons }));
+    },
+    async restoreTask(task) {
+        await Tasks.restore(task.id);
+        await this.reload();
+        dispatchSyncNow();
+        window.dispatchEvent(new CustomEvent('rn:refresh-views'));
+    },
+    async restoreNote(note) {
+        await Notes.restore(note.id);
+        await this.reload();
+        dispatchSyncNow();
+        window.dispatchEvent(new CustomEvent('rn:refresh-views'));
+    },
+    async purgeTask(task) {
+        const shell = Alpine.$data(document.querySelector('[x-data="appShell"]'));
+        const ok = await shell.confirm(`彻底删除任务「${task.title || '未命名'}」？此操作不可撤销。`, {
+            title: '彻底删除', confirmLabel: '永久删除', danger: true,
+        });
+        if (!ok) return;
+        await Tasks.hardDelete(task.id);
+        await this.reload();
+    },
+    async purgeNote(note) {
+        const shell = Alpine.$data(document.querySelector('[x-data="appShell"]'));
+        const ok = await shell.confirm(`彻底删除笔记「${note.title || '未命名'}」？此操作不可撤销。`, {
+            title: '彻底删除', confirmLabel: '永久删除', danger: true,
+        });
+        if (!ok) return;
+        await Notes.hardDelete(note.id);
+        await this.reload();
+    },
+    async emptyTrash() {
+        const shell = Alpine.$data(document.querySelector('[x-data="appShell"]'));
+        const total = this.deletedTasks.length + this.deletedNotes.length;
+        if (!total) return;
+        const ok = await shell.confirm(`将彻底删除 ${total} 项内容。此操作不可撤销。`, {
+            title: '清空回收站', confirmLabel: '彻底清空', danger: true,
+        });
+        if (!ok) return;
+        for (const t of this.deletedTasks) await Tasks.hardDelete(t.id);
+        for (const n of this.deletedNotes) await Notes.hardDelete(n.id);
+        await this.reload();
+    },
+}));
+
 Alpine.data('notesView', () => ({
+    filter: 'all',
     init() { this.$nextTick(() => createIcons({ icons })); },
+    filterAndSort(items) {
+        const list = (items || []).slice();
+        const out = this.filter === 'pinned' ? list.filter(n => n.pinned)
+                  : this.filter === 'favorite' ? list.filter(n => n.favorite)
+                  : list;
+        return out.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.updated_at - a.updated_at);
+    },
 }));
 
 Alpine.data('calendarView', () => ({
@@ -434,14 +700,22 @@ Alpine.data('calendarView', () => ({
     _reloadListener: null,
     _resizeListener: null,
     rebuildEvents(tasks) {
+        const colorByPriority = ['#a09d96', '#7c4dff', '#f59e0b', '#ff4d14'];
         const list = tasks.filter(t => t.due_at);
-        return list.map(t => ({
-            id: t.id,
-            title: t.title,
-            start: new Date(t.due_at).toISOString(),
-            extendedProps: { task: t },
-            classNames: t.status === 'done' ? ['fc-done'] : [],
-        }));
+        return list.map(t => {
+            const cls = [];
+            if (t.status === 'done') cls.push('fc-done');
+            cls.push('fc-priority-' + (t.priority || 0));
+            return {
+                id: t.id,
+                title: t.title,
+                start: new Date(t.due_at).toISOString(),
+                backgroundColor: colorByPriority[t.priority || 0],
+                borderColor: colorByPriority[t.priority || 0],
+                extendedProps: { task: t },
+                classNames: cls,
+            };
+        });
     },
     async reloadFromTasks() {
         if (!this.instance) return;
@@ -453,11 +727,6 @@ Alpine.data('calendarView', () => ({
         });
     },
     async init() {
-        const { Calendar } = await import('@fullcalendar/core');
-        const dayGrid = (await import('@fullcalendar/daygrid')).default;
-        const timeGrid = (await import('@fullcalendar/timegrid')).default;
-        const interaction = (await import('@fullcalendar/interaction')).default;
-
         const tasks = await Tasks.list({ includeDeleted: false });
         const events = this.rebuildEvents(tasks);
 
@@ -522,6 +791,8 @@ Alpine.data('kanbanView', () => ({
         { id: 'doing', title: '进行中', tasks: [] },
         { id: 'done', title: '已完成', tasks: [] },
     ],
+    quickAddText: { todo: '', doing: '', done: '' },
+    dragOverCol: null,
     _reloadListener: null,
     async init() {
         await this.refresh();
@@ -539,6 +810,22 @@ Alpine.data('kanbanView', () => ({
         }));
         this.$nextTick(() => createIcons({ icons }));
     },
+    async quickAddIn(statusId) {
+        const text = (this.quickAddText[statusId] || '').trim();
+        if (!text) return;
+        const parsed = parseNL(text);
+        await Tasks.upsert({
+            title: parsed.title,
+            due_at: parsed.due_at,
+            status: statusId,
+            priority: 1,
+            completed_at: statusId === 'done' ? Date.now() : null,
+        });
+        this.quickAddText[statusId] = '';
+        await this.refresh();
+        dispatchSyncNow();
+        window.dispatchEvent(new CustomEvent('rn:refresh-views'));
+    },
     async drop(targetCol, ev) {
         ev.preventDefault();
         const id = ev.dataTransfer.getData('text/task-id');
@@ -553,6 +840,7 @@ Alpine.data('kanbanView', () => ({
         });
         await this.refresh();
         dispatchSyncNow();
+        window.dispatchEvent(new CustomEvent('rn:refresh-views'));
     },
     dragstart(t, ev) {
         ev.dataTransfer.setData('text/task-id', t.id);
@@ -561,10 +849,16 @@ Alpine.data('kanbanView', () => ({
 
 Alpine.data('statsView', () => ({
     weekData: [],
+    weekMax: 1,
     totals: { all: 0, done: 0, overdue: 0, today: 0 },
+    priorityRows: [],
     _reloadListener: null,
     reload() {
         return this.load();
+    },
+    weekScale(n) {
+        if (!this.weekMax) return 0;
+        return Math.min(100, Math.round((n / this.weekMax) * 100));
     },
     async load() {
         const all = await Tasks.list({ includeDeleted: false });
@@ -584,12 +878,21 @@ Alpine.data('statsView', () => ({
             });
         }
         this.weekData = week;
+        this.weekMax = Math.max(1, ...week.flatMap(d => [d.completed, d.due]));
         this.totals = {
             all: all.length,
             done: all.filter(t => t.status === 'done').length,
             overdue: all.filter(t => t.due_at && t.due_at < now && t.status !== 'done').length,
             today: all.filter(t => t.due_at && t.due_at >= todayStart && t.due_at < todayStart + 86400_000 && t.status !== 'done').length,
         };
+        const open = all.filter(t => t.status !== 'done' && t.status !== 'archived');
+        const colors = ['bg-ink-400', 'bg-brand-500', 'bg-amber-500', 'bg-accent-500'];
+        const labels = ['低', '中', '高', '紧急'];
+        const totalOpen = Math.max(1, open.length);
+        this.priorityRows = labels.map((label, i) => {
+            const count = open.filter(t => (t.priority || 0) === i).length;
+            return { label, count, pct: Math.round((count / totalOpen) * 100), color: colors[i] };
+        });
         this.$nextTick(() => createIcons({ icons }));
     },
     async init() {

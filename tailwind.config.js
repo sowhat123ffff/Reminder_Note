@@ -4,6 +4,13 @@ module.exports = {
     './public/**/*.html',
     './public/js/**/*.js',
   ],
+  safelist: [
+    'priority-0',
+    'priority-1',
+    'priority-2',
+    'priority-3',
+    'priority-edge',
+  ],
   darkMode: 'class',
   theme: {
     extend: {

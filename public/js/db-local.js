@@ -84,6 +84,14 @@ const Tasks = {
         if (!t) return null;
         return Tasks.upsert({ ...t, deleted_at: null, updated_at: now() });
     },
+    /** Permanently remove a record from the local cache (does not affect server). */
+    async hardDelete(id) {
+        await db.tasks.delete(id);
+    },
+    async listDeleted() {
+        const items = await db.tasks.toArray();
+        return items.filter(t => t.deleted_at).sort((a, b) => (b.deleted_at || 0) - (a.deleted_at || 0));
+    },
     async dirty() { return db.tasks.where('dirty').equals(1).toArray(); },
     /**
      * Clear dirty flag, but only for records whose updated_at still matches
@@ -158,6 +166,13 @@ const Notes = {
         const n = await db.notes.get(id);
         if (!n) return null;
         return Notes.upsert({ ...n, deleted_at: null, updated_at: now() });
+    },
+    async hardDelete(id) {
+        await db.notes.delete(id);
+    },
+    async listDeleted() {
+        const items = await db.notes.toArray();
+        return items.filter(n => n.deleted_at).sort((a, b) => (b.deleted_at || 0) - (a.deleted_at || 0));
     },
     async dirty() { return db.notes.where('dirty').equals(1).toArray(); },
     /** @param {Array<{id: string, updated_at: number}>} pushed */

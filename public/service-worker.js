@@ -4,9 +4,13 @@
  *  - Install: pre-cache the app shell.
  *  - Activate: clean up old caches.
  *  - Fetch: network-first for /api/*, stale-while-revalidate for static assets.
+ *
+ * VERSION is bumped each time this file is regenerated (see deploy script).
+ * For dev builds we add a query string fallback so a hard refresh evicts the
+ * stale shell deterministically.
  */
 
-const VERSION = 'v1';
+const VERSION = 'v2-2026-05-06';
 const SHELL_CACHE = `rn-shell-${VERSION}`;
 const RUNTIME_CACHE = `rn-runtime-${VERSION}`;
 

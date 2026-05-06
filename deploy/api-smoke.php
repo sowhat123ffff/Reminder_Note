@@ -107,6 +107,20 @@ assertStatus('update-note', $r, 200);
 assert($r['json']['note']['favorite'] === true);
 assert($r['json']['note']['tags'] === ['hello']);
 
+$r = req('PATCH', "{$base}/api/notes/{$noteId}", [
+    'headers' => ['Content-Type: application/json', $auth],
+    'body'    => json_encode(['title' => null, 'content' => null]),
+]);
+assertStatus('update-note-null', $r, 200);
+assert($r['json']['note']['title'] === '');
+assert($r['json']['note']['content'] === '');
+
+$r = req('PATCH', "{$base}/api/notes/{$noteId}", [
+    'headers' => ['Content-Type: application/json', $auth],
+    'body'    => json_encode(['title' => 'Smoke note', 'content' => '# Hello']),
+]);
+assertStatus('restore-note-title', $r, 200);
+
 $r = req('GET', "{$base}/api/notes?search=Smoke", ['headers' => [$auth]]);
 assertStatus('list-notes', $r, 200);
 assert(count($r['json']['notes']) >= 1);

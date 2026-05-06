@@ -97,7 +97,15 @@
             }
         });
 
-        if (localStorage.getItem('rn:accessToken') && Number(localStorage.getItem('rn:accessExp') || 0) > Date.now()) {
+        const _hasValid = (() => {
+            const access = localStorage.getItem('rn:accessToken');
+            const refresh = localStorage.getItem('rn:refreshToken');
+            const aExp = Number(localStorage.getItem('rn:accessExp') || 0);
+            const rExp = Number(localStorage.getItem('rn:refreshExp') || 0);
+            const t = Date.now() + 30000;
+            return (access && aExp > t) || (refresh && rExp > t);
+        })();
+        if (_hasValid) {
             location.replace('./index.html');
         }
     </script>

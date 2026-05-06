@@ -31,9 +31,14 @@ function clearTokens() {
 }
 
 export function isAuthenticated() {
-    const t = getAccess();
-    const exp = Number(localStorage.getItem(STORAGE.accessExp) || 0);
-    return Boolean(t) && exp > Date.now() - 30_000;
+    const access = getAccess();
+    const refresh = getRefresh();
+    if (!access && !refresh) return false;
+    const accessExp = Number(localStorage.getItem(STORAGE.accessExp) || 0);
+    const refreshExp = Number(localStorage.getItem(STORAGE.refreshExp) || 0);
+    if (access && accessExp > Date.now() + 30_000) return true;
+    if (refresh && refreshExp > Date.now() + 30_000) return true;
+    return false;
 }
 
 async function refreshTokens() {

@@ -6,9 +6,22 @@ marked.setOptions({
     breaks: true,
 });
 
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+    if (node.tagName === 'A' && node.getAttribute('href')) {
+        const href = node.getAttribute('href') || '';
+        if (/^https?:\/\//i.test(href)) {
+            node.setAttribute('target', '_blank');
+            node.setAttribute('rel', 'noopener noreferrer');
+        }
+    }
+});
+
 export function renderMarkdown(src = '') {
     const html = marked.parse(src);
-    return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+    return DOMPurify.sanitize(html, {
+        USE_PROFILES: { html: true },
+        ADD_ATTR: ['target', 'rel'],
+    });
 }
 
 export function stripMarkdown(src = '') {

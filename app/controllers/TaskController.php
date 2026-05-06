@@ -177,10 +177,18 @@ final class TaskController
         $set = [];
         $args = [':id' => $id, ':updated_at' => $now];
 
+        $notNullDefault = [
+            'title'  => '',
+            'notes'  => '',
+            'status' => 'todo',
+            'priority' => 1,
+        ];
         foreach (['title','notes','status','priority','due_at','remind_at','repeat_rule'] as $f) {
             if (array_key_exists($f, $data)) {
                 $set[] = "{$f} = :{$f}";
-                $args[":{$f}"] = $data[$f];
+                $args[":{$f}"] = ($data[$f] === null && array_key_exists($f, $notNullDefault))
+                    ? $notNullDefault[$f]
+                    : $data[$f];
             }
         }
         if (array_key_exists('tags', $data)) {
