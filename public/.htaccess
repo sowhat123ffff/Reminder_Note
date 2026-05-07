@@ -2,11 +2,6 @@
 RewriteEngine On
 RewriteBase /Reminder_Note/public/
 
-# Disallow PHP execution inside uploads/
-<Directory "uploads">
-    php_flag engine off
-</Directory>
-
 # API entry point
 RewriteCond %{REQUEST_URI} ^/Reminder_Note/public/api/
 RewriteCond %{REQUEST_FILENAME} !-f
