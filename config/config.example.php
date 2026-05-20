@@ -1,14 +1,15 @@
 <?php
 /**
  * Reminder Note - Configuration template.
- * Copy this file to config/config.php and fill the secrets.
+ * Copy this file to config/config.php. No manual hashing required;
+ * accounts are created via the /register page (first user has no special
+ * privileges — there is no admin role).
  *
- * Generate password hash:
- *   php deploy/hash.php "your-password"
+ * jwt_secret = 'auto' (default): a 64-byte random secret is generated on
+ * first boot and persisted to data/.jwt_secret. Delete that file to
+ * invalidate every existing token.
  *
- * Generate JWT secret (Linux):
- *   openssl rand -hex 64
- * Or PHP:
+ * Override with a fixed value (e.g. across multiple servers) if you want.
  *   php -r "echo bin2hex(random_bytes(64));"
  */
 
@@ -17,10 +18,7 @@ return [
     'app_debug'  => false,
     'app_tz'     => 'Asia/Shanghai',
 
-    'username'      => 'jian',
-    'password_hash' => '$2y$12$REPLACE_ME_WITH_REAL_HASH',
-
-    'jwt_secret'      => 'REPLACE_ME_WITH_64_BYTE_HEX',
+    'jwt_secret'      => 'auto',
     'jwt_access_ttl'  => 900,
     'jwt_refresh_ttl' => 2592000,
     'jwt_issuer'      => 'reminder-note',
@@ -36,8 +34,11 @@ return [
         'application/zip',
     ],
 
-    'login_rate_limit'  => 5,
-    'login_rate_window' => 60,
+    // Per-IP throttle for /auth/login and /auth/register; the same window
+    // applies to both, but they're counted independently by `kind`.
+    'login_rate_limit'    => 5,
+    'login_rate_window'   => 60,
+    'register_rate_limit' => 3,
 
     'cors_origins' => [],
 ];

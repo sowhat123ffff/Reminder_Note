@@ -3,30 +3,34 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Auth;
 use App\Db;
-use App\HttpException;
 use App\Request;
 use PDO;
 
 /**
- * Incremental sync between client (IndexedDB) and server (SQLite).
+ * Incremental sync between client (IndexedDB) and server (SQLite),
+ * scoped to the authenticated user.
  *
  * Pull: client sends `since` timestamp; server returns every record whose
- *       updated_at > since (including soft-deleted ones, marked by deleted_at).
+ *       updated_at > since AND user_id = current uid (including soft-deleted
+ *       ones, marked by deleted_at).
  *
  * Push: client sends a batch of locally-modified records (tasks, notes).
- *       Server applies last-write-wins per record, comparing updated_at;
- *       returns final authoritative versions and the new server timestamp.
+ *       Server applies last-write-wins per record, comparing updated_at.
+ *       The client's `user_id` field is always overwritten with the current
+ *       uid — we never trust the client's claim.
  */
 final class SyncController
 {
     public function pull(Request $req): array
     {
+        $uid = Auth::userId();
         $since = (int) ($req->query['since'] ?? 0);
         $limit = min(2000, max(1, (int) ($req->query['limit'] ?? 1000)));
 
-        $tasks = $this->fetchSince('tasks', $since, $limit);
-        $notes = $this->fetchSince('notes', $since, $limit);
+        $tasks = $this->fetchSince('tasks', $uid, $since, $limit);
+        $notes = $this->fetchSince('notes', $uid, $since, $limit);
 
         return [
             'tasks'      => array_map([TaskController::class, 'serialize'], $tasks),
@@ -38,6 +42,7 @@ final class SyncController
 
     public function push(Request $req): array
     {
+        $uid = Auth::userId();
         $tasks = is_array($req->body['tasks'] ?? null) ? $req->body['tasks'] : [];
         $notes = is_array($req->body['notes'] ?? null) ? $req->body['notes'] : [];
 
@@ -45,9 +50,9 @@ final class SyncController
         $appliedNotes = [];
         $rejected     = [];
 
-        Db::transaction(function () use ($tasks, $notes, &$appliedTasks, &$appliedNotes, &$rejected) {
+        Db::transaction(function () use ($uid, $tasks, $notes, &$appliedTasks, &$appliedNotes, &$rejected) {
             foreach ($tasks as $t) {
-                $res = $this->upsertTask($t);
+                $res = $this->upsertTask($uid, $t);
                 if ($res['ok']) {
                     $appliedTasks[] = $res['row'];
                 } else {
@@ -55,7 +60,7 @@ final class SyncController
                 }
             }
             foreach ($notes as $n) {
-                $res = $this->upsertNote($n);
+                $res = $this->upsertNote($uid, $n);
                 if ($res['ok']) {
                     $appliedNotes[] = $res['row'];
                 } else {
@@ -72,17 +77,18 @@ final class SyncController
         ];
     }
 
-    private function fetchSince(string $table, int $since, int $limit): array
+    private function fetchSince(string $table, string $uid, int $since, int $limit): array
     {
-        $sql  = "SELECT * FROM {$table} WHERE updated_at > :since ORDER BY updated_at ASC LIMIT :limit";
+        $sql  = "SELECT * FROM {$table} WHERE user_id = :uid AND updated_at > :since ORDER BY updated_at ASC LIMIT :limit";
         $stmt = Db::pdo()->prepare($sql);
+        $stmt->bindValue(':uid', $uid, PDO::PARAM_STR);
         $stmt->bindValue(':since', $since, PDO::PARAM_INT);
         $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
         $stmt->execute();
         return $stmt->fetchAll();
     }
 
-    private function upsertTask(array $t): array
+    private function upsertTask(string $uid, array $t): array
     {
         if (empty($t['id']) || !is_string($t['id'])) {
             return ['ok' => false, 'reason' => 'missing_id'];
@@ -99,15 +105,26 @@ final class SyncController
         $now = Db::now();
         $clientUpdated = (int) ($t['updated_at'] ?? $now);
 
-        $existing = Db::findById('tasks', $id);
+        // Look up by (id, uid) so an attacker's id collision can't overwrite
+        // someone else's row. If a row with the same id but a different uid
+        // exists, this returns null and we fall through to INSERT, which will
+        // fail on the PK constraint — convert that into an explicit reject.
+        $existing = Db::findByIdForUser('tasks', $id, $uid);
         if ($existing && (int) $existing['updated_at'] >= $clientUpdated) {
             return ['ok' => true, 'row' => TaskController::serialize($existing)];
+        }
+        if (!$existing) {
+            $owned = Db::findById('tasks', $id);
+            if ($owned) {
+                return ['ok' => false, 'reason' => 'id_conflict'];
+            }
         }
 
         $clientStatus = $t['status'] ?? 'todo';
         $repeatRuleJson = self::normalizeRepeatRule($t['repeat_rule'] ?? null);
         $row = [
             'id'           => $id,
+            'user_id'      => $uid,
             'title'        => mb_substr($title, 0, 500),
             'notes'        => mb_substr((string) ($t['notes'] ?? ''), 0, 50000),
             'status'       => in_array($clientStatus, ['todo','doing','done','archived'], true) ? $clientStatus : 'todo',
@@ -124,13 +141,14 @@ final class SyncController
         ];
 
         if ($existing) {
-            $sql = 'UPDATE tasks SET title=:title, notes=:notes, status=:status, priority=:priority, due_at=:due_at, remind_at=:remind_at, repeat_rule=:repeat_rule, tags=:tags, subtasks=:subtasks, updated_at=:updated_at, completed_at=:completed_at, deleted_at=:deleted_at WHERE id=:id';
+            $sql = 'UPDATE tasks SET title=:title, notes=:notes, status=:status, priority=:priority, due_at=:due_at, remind_at=:remind_at, repeat_rule=:repeat_rule, tags=:tags, subtasks=:subtasks, updated_at=:updated_at, completed_at=:completed_at, deleted_at=:deleted_at WHERE id=:id AND user_id=:uid';
         } else {
-            $sql = 'INSERT INTO tasks (id, title, notes, status, priority, due_at, remind_at, repeat_rule, tags, subtasks, created_at, updated_at, completed_at, deleted_at) VALUES (:id, :title, :notes, :status, :priority, :due_at, :remind_at, :repeat_rule, :tags, :subtasks, :created_at, :updated_at, :completed_at, :deleted_at)';
+            $sql = 'INSERT INTO tasks (id, user_id, title, notes, status, priority, due_at, remind_at, repeat_rule, tags, subtasks, created_at, updated_at, completed_at, deleted_at) VALUES (:id, :uid, :title, :notes, :status, :priority, :due_at, :remind_at, :repeat_rule, :tags, :subtasks, :created_at, :updated_at, :completed_at, :deleted_at)';
         }
 
         $params = [
             ':id'          => $row['id'],
+            ':uid'         => $row['user_id'],
             ':title'       => $row['title'],
             ':notes'       => $row['notes'],
             ':status'      => $row['status'],
@@ -150,10 +168,10 @@ final class SyncController
 
         Db::pdo()->prepare($sql)->execute($params);
 
-        return ['ok' => true, 'row' => TaskController::serialize(Db::findById('tasks', $id))];
+        return ['ok' => true, 'row' => TaskController::serialize(Db::findByIdForUser('tasks', $id, $uid))];
     }
 
-    private function upsertNote(array $n): array
+    private function upsertNote(string $uid, array $n): array
     {
         if (empty($n['id']) || !is_string($n['id'])) {
             return ['ok' => false, 'reason' => 'missing_id'];
@@ -169,13 +187,20 @@ final class SyncController
 
         $now = Db::now();
         $clientUpdated = (int) ($n['updated_at'] ?? $now);
-        $existing = Db::findById('notes', $id);
+        $existing = Db::findByIdForUser('notes', $id, $uid);
         if ($existing && (int) $existing['updated_at'] >= $clientUpdated) {
             return ['ok' => true, 'row' => NoteController::serialize($existing)];
+        }
+        if (!$existing) {
+            $owned = Db::findById('notes', $id);
+            if ($owned) {
+                return ['ok' => false, 'reason' => 'id_conflict'];
+            }
         }
 
         $row = [
             'id'         => $id,
+            'user_id'    => $uid,
             'title'      => mb_substr($title, 0, 500),
             'content'    => mb_substr((string) ($n['content'] ?? ''), 0, 200000),
             'tags'       => json_encode(self::cleanStringList($n['tags'] ?? []), JSON_UNESCAPED_UNICODE),
@@ -187,12 +212,12 @@ final class SyncController
         ];
 
         if ($existing) {
-            $sql = 'UPDATE notes SET title=:title, content=:content, tags=:tags, pinned=:pinned, favorite=:favorite, updated_at=:updated_at, deleted_at=:deleted_at WHERE id=:id';
+            $sql = 'UPDATE notes SET title=:title, content=:content, tags=:tags, pinned=:pinned, favorite=:favorite, updated_at=:updated_at, deleted_at=:deleted_at WHERE id=:id AND user_id=:uid';
         } else {
-            $sql = 'INSERT INTO notes (id, title, content, tags, pinned, favorite, created_at, updated_at, deleted_at) VALUES (:id, :title, :content, :tags, :pinned, :favorite, :created_at, :updated_at, :deleted_at)';
+            $sql = 'INSERT INTO notes (id, user_id, title, content, tags, pinned, favorite, created_at, updated_at, deleted_at) VALUES (:id, :uid, :title, :content, :tags, :pinned, :favorite, :created_at, :updated_at, :deleted_at)';
         }
         $params = [
-            ':id' => $row['id'], ':title' => $row['title'], ':content' => $row['content'],
+            ':id' => $row['id'], ':uid' => $row['user_id'], ':title' => $row['title'], ':content' => $row['content'],
             ':tags' => $row['tags'], ':pinned' => $row['pinned'], ':favorite' => $row['favorite'],
             ':updated_at' => $row['updated_at'], ':deleted_at' => $row['deleted_at'],
         ];
@@ -200,7 +225,7 @@ final class SyncController
             $params[':created_at'] = $row['created_at'];
         }
         Db::pdo()->prepare($sql)->execute($params);
-        return ['ok' => true, 'row' => NoteController::serialize(Db::findById('notes', $id))];
+        return ['ok' => true, 'row' => NoteController::serialize(Db::findByIdForUser('notes', $id, $uid))];
     }
 
     private static function cleanStringList(mixed $v): array

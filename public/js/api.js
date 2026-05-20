@@ -4,6 +4,7 @@
  */
 
 import { apiBaseFromPage } from './urls.js';
+import { wipeAll as wipeLocalCache } from './db-local.js';
 
 const STORAGE = {
     access:    'rn:accessToken',
@@ -119,21 +120,43 @@ export async function request(path, opts = {}, retry = true) {
 }
 
 export const api = {
+    register(username, password) {
+        return rawFetch('/auth/register', { method: 'POST', body: { username, password } }, false)
+            .then(async res => {
+                const data = await res.json();
+                if (!res.ok) throw new ApiError(res.status, data?.error?.code, data?.error?.message);
+                await wipeLocalCache();
+                setTokens(data);
+                return data;
+            });
+    },
     login(username, password) {
         return rawFetch('/auth/login', { method: 'POST', body: { username, password } }, false)
             .then(async res => {
                 const data = await res.json();
                 if (!res.ok) throw new ApiError(res.status, data?.error?.code, data?.error?.message);
+                await wipeLocalCache();
                 setTokens(data);
                 return data;
             });
     },
-    logout() {
+    async logout() {
         const refreshToken = getRefresh();
+        try {
+            await rawFetch('/auth/logout', { method: 'POST', body: { refreshToken } }, false);
+        } catch { /* network failure shouldn't block local cleanup */ }
+        try { await wipeLocalCache(); } catch { /* ignore */ }
         clearTokens();
-        return rawFetch('/auth/logout', { method: 'POST', body: { refreshToken } }, false).catch(() => {});
     },
     me()                       { return request('/auth/me'); },
+
+    changePassword(oldPassword, newPassword) {
+        return request('/auth/password', { method: 'PATCH', body: { oldPassword, newPassword } });
+    },
+    listSessions()             { return request('/auth/sessions'); },
+    revokeSession(jti)         { return request('/auth/sessions/' + encodeURIComponent(jti), { method: 'DELETE' }); },
+    revokeAllSessions()        { return request('/auth/sessions', { method: 'DELETE' }); },
+    loginHistory(limit = 50)   { return request('/auth/login-history?limit=' + Number(limit)); },
 
     listTasks(query = {})      {
         const qs = new URLSearchParams(query).toString();
@@ -157,4 +180,4 @@ export const api = {
     syncPush(payload)          { return request('/sync/push', { method: 'POST', body: payload }); },
 };
 
-export { clearTokens, apiBase };
+export { clearTokens, apiBase, wipeLocalCache };

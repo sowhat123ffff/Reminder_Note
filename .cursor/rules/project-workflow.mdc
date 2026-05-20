@@ -1,0 +1,68 @@
+---
+description: Reminder_Note 工作目录强制工作流 — Karpathy guidelines + AGENTS.md memory + 每次修改一份 CHANGELOG
+alwaysApply: true
+---
+
+# Reminder_Note Workflow Rules
+
+本工作目录所有 Agent 操作都必须遵守。除非用户在当前对话里明确豁免，否则不可绕过。
+
+## 0. 动手前先读 memory
+
+在编辑/创建任何文件之前，按顺序读完：
+1. `AGENTS.md`（仓库根目录） — 上一个 Agent 的交接笔记。
+2. `CHANGELOG/` 里最新的 3 个文件（按文件名倒排）。
+3. `.cursor/skills/karpathy-guidelines/SKILL.md`。
+
+任何一项缺失就停下，告诉用户后再继续。
+
+## 1. 严格执行 Karpathy guidelines
+
+`.cursor/skills/karpathy-guidelines/SKILL.md` 是硬性约束：
+- 动手前先说清假设；不清楚就问，不要默默猜。
+- Simplicity first：能 50 行解决就不写 200 行。
+- Surgical changes：只改用户要求的，不顺手"优化"周边代码。
+- Goal-driven：每个任务都要有可验证的成功标准。
+
+## 2. 改动后必须更新 `AGENTS.md`
+
+完成一次有意义的修改（不是纯读/纯问/纯探索）后，更新这三段：
+- `## Current state` — 现在什么能跑、什么坏了、什么 WIP。
+- `## Last change` — 1–3 句：改了什么、为什么；附上对应 changelog 文件路径。
+- `## Known pitfalls` — 后续 Agent 必须知道的坑。
+
+整个文件保持在约 200 行以内，过期细节挪到 changelog 里。
+
+## 3. 每次改动写一份 `CHANGELOG/` 条目
+
+文件名：`YYYY-MM-DD-HHMM-<short-slug>.md`（UTC+8，slug 用 kebab-case）。
+
+模板（直接复制）：
+```
+# <一句话标题>
+
+- **Date:** YYYY-MM-DD HH:MM (UTC+8)
+- **Agent:** <模型名，如果知道；否则写 unknown>
+- **User request:** <一行复述用户的请求>
+
+## What changed
+- 文件路径 — 简短原因
+
+## Why
+<1–3 句话讲清动机>
+
+## Verification
+<跑了什么命令 / 用户怎么验证>
+
+## Notes for next agent
+<坑、未完成项、不要回滚的东西>
+```
+
+可以**不写**的情况只有：纯提问、只读探索、改 typo 这种用户当场就能看见的琐事。
+拿不准就写一份。
+
+## 4. 不可破坏的契约
+
+- `CHANGELOG/*.md` **append-only**：不删、不改历史条目。要撤销旧改动就**新写**一条 changelog 说明原因。
+- 不准默默回滚上一个 Agent 的改动。要回滚就在 changelog 里讲明白。
+- 如果 `AGENTS.md` 和最近的 changelog 互相矛盾，停下来问用户，不要自己脑补。

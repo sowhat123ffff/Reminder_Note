@@ -10,14 +10,16 @@ final class Request
     public array $query;
     public array $body;
     public string $ip;
+    public string $userAgent;
 
-    public function __construct(string $method, string $path, array $query, array $body, string $ip)
+    public function __construct(string $method, string $path, array $query, array $body, string $ip, string $userAgent = '')
     {
-        $this->method = strtoupper($method);
-        $this->path   = $path;
-        $this->query  = $query;
-        $this->body   = $body;
-        $this->ip     = $ip;
+        $this->method    = strtoupper($method);
+        $this->path      = $path;
+        $this->query     = $query;
+        $this->body      = $body;
+        $this->ip        = $ip;
+        $this->userAgent = $userAgent;
     }
 
     public static function fromGlobals(): self
@@ -71,7 +73,8 @@ final class Request
             $path,
             $_GET,
             $body,
-            self::clientIp()
+            self::clientIp(),
+            (string) ($_SERVER['HTTP_USER_AGENT'] ?? '')
         );
     }
 

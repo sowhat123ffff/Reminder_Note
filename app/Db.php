@@ -54,6 +54,10 @@ final class Db
 
     /**
      * Apply schema.sql on first run. Safe to call repeatedly (uses CREATE IF NOT EXISTS).
+     *
+     * Detects pre-multi-user databases (tasks exists but users does not) and refuses
+     * to continue, since adding user_id columns to existing rows is not safe to do
+     * automatically. Operator must delete data/app.db (and re-register) to migrate.
      */
     private static function ensureSchema(PDO $pdo): void
     {
@@ -62,9 +66,17 @@ final class Db
             return;
         }
 
-        $row = $pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")->fetch();
-        if ($row !== false) {
+        $hasUsers = $pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")->fetch() !== false;
+        if ($hasUsers) {
             return;
+        }
+
+        $hasTasks = $pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")->fetch() !== false;
+        if ($hasTasks) {
+            throw new RuntimeException(
+                "Database schema is from a pre-multi-user version. "
+                . "Delete data/app.db (and any *.db-wal / *.db-shm) and restart the app to recreate the schema."
+            );
         }
 
         $sql = (string) file_get_contents($schemaPath);
@@ -90,6 +102,23 @@ final class Db
         }
         $stmt = self::pdo()->prepare("SELECT * FROM {$table} WHERE id = :id LIMIT 1");
         $stmt->execute([':id' => $id]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    /**
+     * Like findById but also scoped to a user_id. Returns null when the row
+     * doesn't exist OR exists but belongs to another user — controllers
+     * should treat both cases as 404 to avoid leaking which is which.
+     */
+    public static function findByIdForUser(string $table, string $id, string $userId): ?array
+    {
+        $allowed = ['tasks', 'notes', 'attachments'];
+        if (!in_array($table, $allowed, true)) {
+            throw new RuntimeException("Table not allowed: {$table}");
+        }
+        $stmt = self::pdo()->prepare("SELECT * FROM {$table} WHERE id = :id AND user_id = :uid LIMIT 1");
+        $stmt->execute([':id' => $id, ':uid' => $userId]);
         $row = $stmt->fetch();
         return $row ?: null;
     }

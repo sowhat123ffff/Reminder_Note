@@ -47,10 +47,16 @@ $req    = Request::fromGlobals();
 $router = new Router();
 
 $auth = new AuthController();
-$router->post('/auth/login',   [$auth, 'login'],   true);
-$router->post('/auth/refresh', [$auth, 'refresh'], true);
-$router->post('/auth/logout',  [$auth, 'logout'],  true);
-$router->get( '/auth/me',      [$auth, 'me']);
+$router->post('/auth/register', [$auth, 'register'], true);
+$router->post('/auth/login',    [$auth, 'login'],    true);
+$router->post('/auth/refresh',  [$auth, 'refresh'],  true);
+$router->post('/auth/logout',   [$auth, 'logout'],   true);
+$router->get( '/auth/me',       [$auth, 'me']);
+$router->patch('/auth/password',         [$auth, 'changePassword']);
+$router->get(  '/auth/sessions',         [$auth, 'sessions']);
+$router->delete('/auth/sessions',        [$auth, 'revokeAllSessions']);
+$router->delete('/auth/sessions/{jti}',  [$auth, 'revokeSession']);
+$router->get(  '/auth/login-history',    [$auth, 'loginHistory']);
 
 if (class_exists(TaskController::class)) {
     $tasks = new TaskController();

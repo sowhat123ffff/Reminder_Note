@@ -1,11 +1,11 @@
 # Reminder Note
 
-A personal reminder + notes PWA. Single user. Offline first. Mobile friendly.
+A personal reminder + notes PWA. **Multi-user, open registration.** Offline first. Mobile friendly.
 
 - Backend: PHP 8 + SQLite (PDO + WAL)
 - Frontend: HTML + Tailwind v3 + Alpine.js + Dexie (IndexedDB)
 - PWA: native Service Worker + Web App Manifest
-- Auth: hardcoded single user + JWT
+- Auth: open `/register.html`, JWT (15 min access + 30 day refresh), per-user data isolation
 - Deploy: XAMPP (dev) / Nginx + PHP-FPM + Let's Encrypt (prod)
 
 ---
@@ -59,9 +59,10 @@ PHP must have these extensions enabled (uncomment in `php.ini` if needed):
    ```
    copy config\config.example.php config\config.php
    ```
-   默认账号密码：`jian` / `123456`。
+   不需要再手动生成密码哈希 / JWT secret。`jwt_secret` 默认是 `'auto'`，
+   首次启动时会自动写入 `data/.jwt_secret`（64 字节随机串）。
 
-5. **创建数据库目录**（首次运行会自动建 `data/app.db`）
+5. **创建数据库目录**（首次访问 `/api/health` 会自动建 `data/app.db`）
    ```
    mkdir data 2>$null
    ```
@@ -70,16 +71,7 @@ PHP must have these extensions enabled (uncomment in `php.ini` if needed):
    ```
    http://localhost/Reminder_Note/public/login.html
    ```
-
-7. **改密码**（务必）
-   ```
-   php deploy\hash.php "your-new-password"
-   ```
-   把输出的哈希粘进 `config/config.php` 的 `password_hash`，并把 `jwt_secret` 也换成
-   ```
-   php -r "echo bin2hex(random_bytes(64));"
-   ```
-   产生的随机串。
+   点页面底部的「注册」创建你的第一个账号；之后随时回到 `/login.html`。
 
 #### 看到 500 Internal Server Error？
 
@@ -112,11 +104,31 @@ PHP must have these extensions enabled (uncomment in `php.ini` if needed):
    ```
    http://127.0.0.1:8765/login.html
    ```
+   点底部「注册」创建账号。
 
-4. （可选）跑 API 冒烟测试：
+4. （可选）跑 API 冒烟测试（会自动注册两个临时账号验证多用户隔离）：
    ```
    php deploy\api-smoke.php http://127.0.0.1:8765
    ```
+
+---
+
+## 多用户 / 安全笔记
+
+- **没有「管理员」概念**：注册顺序无关，每个账号都是平级的普通用户，互相完全隔离。
+- **注册速率限制**：单 IP 每 60 秒最多 3 次注册；登录失败每 60 秒最多 5 次。
+- **密码要求**：≥ 8 位；用户名 3–32 位字母 / 数字 / 下划线。
+- **会话管理**：登入后在「账号设置」可以看到所有活跃会话，单独注销 / 一键全部注销 / 改密码。
+- **改密码**：会保留当前浏览器，强制其它所有设备重新登录。
+- **JWT secret**：默认自动生成存到 `data/.jwt_secret`。**删除该文件 = 让所有现有 token 失效**（所有设备需重新登录）。
+- **uploads 隔离**：附件存到 `public/uploads/<uid>/yyyy/mm/<rand>.ext`，仍然靠不可猜测的随机文件名 + `.htaccess` 禁止 PHP 执行。
+
+## 重置数据库
+
+```
+del data\app.db data\app.db-wal data\app.db-shm
+```
+下一个请求会自动用新 schema 重建空库。
 
 ---
 
@@ -139,13 +151,14 @@ cd /var/www/Reminder_Note
 composer install --no-dev --optimize-autoloader
 npm ci && npm run build
 cp config/config.example.php config/config.php
-php deploy/hash.php "your-password"          # paste into config.php → password_hash
-php -r "echo bin2hex(random_bytes(64));"     # paste into config.php → jwt_secret
 sudo cp deploy/nginx.conf.example /etc/nginx/sites-available/reminder-note
 sudo ln -s /etc/nginx/sites-available/reminder-note /etc/nginx/sites-enabled/
 sudo certbot --nginx -d note.nothingaming.com
 sudo systemctl reload nginx
 ```
+
+第一次访问 `/register.html` 创建账号。`data/.jwt_secret` 会在第一次请求时自动生成。
+**部署完成后立刻去注册你的账号** — 否则任何能访问页面的人都能抢走你想要的用户名。
 
 Backups: `crontab -e` →
 ```
@@ -158,7 +171,12 @@ Backups: `crontab -e` →
 
 - `GET  /` → SPA (`public/index.html`)
 - `GET  /login.html` → login page
+- `GET  /register.html` → register page
+- `POST /api/auth/register` → 公开
 - `POST /api/auth/login` → JWT
+- `PATCH /api/auth/password` → 改密码（鉴权）
+- `GET /api/auth/sessions`, `DELETE /api/auth/sessions/{jti}`, `DELETE /api/auth/sessions` → 会话管理
+- `GET /api/auth/login-history` → 最近 30 天登录历史
 - `GET  /api/sync/pull?since=<ms>` → incremental pull
 - `POST /api/sync/push` → batch upload local changes
 - `GET  /api/health` → 健康检查（最快验证后端是否通）

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Auth;
 use App\Db;
 use App\HttpException;
 use App\Request;
@@ -14,9 +15,10 @@ final class NoteController
 {
     public function list(Request $req): array
     {
+        $uid = Auth::userId();
         $q = $req->query;
-        $where = ['deleted_at IS NULL'];
-        $args  = [];
+        $where = ['user_id = :uid', 'deleted_at IS NULL'];
+        $args  = [':uid' => $uid];
         if (!empty($q['search'])) {
             $where[] = '(title LIKE :search OR content LIKE :search)';
             $args[':search'] = '%' . str_replace(['%','_'], ['\\%','\\_'], (string) $q['search']) . '%';
@@ -32,7 +34,7 @@ final class NoteController
         $limit = min(200, max(1, (int) ($q['limit'] ?? 50)));
         $offset= ($page - 1) * $limit;
 
-        $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+        $whereSql = 'WHERE ' . implode(' AND ', $where);
         $sql = "SELECT * FROM notes {$whereSql} ORDER BY pinned DESC, updated_at DESC LIMIT :limit OFFSET :offset";
         $stmt = Db::pdo()->prepare($sql);
         foreach ($args as $k => $v) {
@@ -60,7 +62,7 @@ final class NoteController
 
     public function show(Request $req, array $params): array
     {
-        $row = Db::findById('notes', (string) $params['id']);
+        $row = Db::findByIdForUser('notes', (string) $params['id'], Auth::userId());
         if (!$row) {
             throw new HttpException(404, 'not_found', 'Note not found');
         }
@@ -69,6 +71,7 @@ final class NoteController
 
     public function create(Request $req): array
     {
+        $uid = Auth::userId();
         $data = Validator::check($req->body, [
             'title'    => 'required|string|max:500',
             'content'  => 'nullable|string|max:200000',
@@ -83,6 +86,7 @@ final class NoteController
 
         $row = [
             'id'         => $id,
+            'user_id'    => $uid,
             'title'      => (string) $data['title'],
             'content'    => (string) ($data['content'] ?? ''),
             'tags'       => json_encode(array_values(array_filter($data['tags'] ?? [], 'is_string')), JSON_UNESCAPED_UNICODE),
@@ -92,10 +96,11 @@ final class NoteController
             'updated_at' => $now,
             'deleted_at' => null,
         ];
-        Db::pdo()->prepare('INSERT INTO notes (id, title, content, tags, pinned, favorite, created_at, updated_at, deleted_at)
-            VALUES (:id, :title, :content, :tags, :pinned, :favorite, :created_at, :updated_at, :deleted_at)')
+        Db::pdo()->prepare('INSERT INTO notes (id, user_id, title, content, tags, pinned, favorite, created_at, updated_at, deleted_at)
+            VALUES (:id, :uid, :title, :content, :tags, :pinned, :favorite, :created_at, :updated_at, :deleted_at)')
             ->execute([
                 ':id' => $row['id'],
+                ':uid' => $row['user_id'],
                 ':title' => $row['title'],
                 ':content' => $row['content'],
                 ':tags' => $row['tags'],
@@ -110,8 +115,9 @@ final class NoteController
 
     public function update(Request $req, array $params): array
     {
+        $uid = Auth::userId();
         $id  = (string) $params['id'];
-        $row = Db::findById('notes', $id);
+        $row = Db::findByIdForUser('notes', $id, $uid);
         if (!$row) {
             throw new HttpException(404, 'not_found', 'Note not found');
         }
@@ -124,7 +130,7 @@ final class NoteController
         ]);
         $now = Db::now();
         $set = [];
-        $args = [':id' => $id, ':updated_at' => $now];
+        $args = [':id' => $id, ':uid' => $uid, ':updated_at' => $now];
         foreach (['title','content'] as $f) {
             if (array_key_exists($f, $data)) {
                 $set[] = "{$f} = :{$f}";
@@ -145,34 +151,36 @@ final class NoteController
         if (count($set) === 1) {
             return ['note' => self::serialize($row)];
         }
-        Db::pdo()->prepare('UPDATE notes SET ' . implode(', ', $set) . ' WHERE id = :id')->execute($args);
-        return ['note' => self::serialize(Db::findById('notes', $id))];
+        Db::pdo()->prepare('UPDATE notes SET ' . implode(', ', $set) . ' WHERE id = :id AND user_id = :uid')->execute($args);
+        return ['note' => self::serialize(Db::findByIdForUser('notes', $id, $uid))];
     }
 
     public function destroy(Request $req, array $params): array
     {
+        $uid = Auth::userId();
         $id  = (string) $params['id'];
-        $row = Db::findById('notes', $id);
+        $row = Db::findByIdForUser('notes', $id, $uid);
         if (!$row) {
             throw new HttpException(404, 'not_found', 'Note not found');
         }
         $now = Db::now();
-        Db::pdo()->prepare('UPDATE notes SET deleted_at = :now, updated_at = :now WHERE id = :id')
-            ->execute([':id' => $id, ':now' => $now]);
+        Db::pdo()->prepare('UPDATE notes SET deleted_at = :now, updated_at = :now WHERE id = :id AND user_id = :uid')
+            ->execute([':id' => $id, ':uid' => $uid, ':now' => $now]);
         return ['ok' => true];
     }
 
     public function restore(Request $req, array $params): array
     {
+        $uid = Auth::userId();
         $id  = (string) $params['id'];
-        $row = Db::findById('notes', $id);
+        $row = Db::findByIdForUser('notes', $id, $uid);
         if (!$row) {
             throw new HttpException(404, 'not_found', 'Note not found');
         }
         $now = Db::now();
-        Db::pdo()->prepare('UPDATE notes SET deleted_at = NULL, updated_at = :now WHERE id = :id')
-            ->execute([':id' => $id, ':now' => $now]);
-        return ['note' => self::serialize(Db::findById('notes', $id))];
+        Db::pdo()->prepare('UPDATE notes SET deleted_at = NULL, updated_at = :now WHERE id = :id AND user_id = :uid')
+            ->execute([':id' => $id, ':uid' => $uid, ':now' => $now]);
+        return ['note' => self::serialize(Db::findByIdForUser('notes', $id, $uid))];
     }
 
     public static function serialize(array $row): array

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Auth;
 use App\Config;
 use App\Db;
 use App\HttpException;
@@ -13,6 +14,8 @@ final class UploadController
 {
     public function create(Request $req): array
     {
+        $uid = Auth::userId();
+
         if (empty($_FILES['file']) || !is_array($_FILES['file']) || !is_uploaded_file((string) $_FILES['file']['tmp_name'])) {
             throw new HttpException(400, 'no_file', 'No file uploaded under field "file"');
         }
@@ -57,7 +60,8 @@ final class UploadController
 
         $year  = date('Y');
         $month = date('m');
-        $sub = "{$dir}/{$year}/{$month}";
+        // user-scoped subdir: /uploads/<uid>/yyyy/mm/<rand>.ext
+        $sub = "{$dir}/{$uid}/{$year}/{$month}";
         if (!is_dir($sub) && !mkdir($sub, 0775, true) && !is_dir($sub)) {
             throw new HttpException(500, 'upload_dir_error', 'Cannot create uploads subdir');
         }
@@ -69,11 +73,12 @@ final class UploadController
 
         $id  = Uuid::v4();
         $now = Db::now();
-        $relPath = "{$year}/{$month}/{$filename}";
+        $relPath = "{$uid}/{$year}/{$month}/{$filename}";
 
-        Db::pdo()->prepare('INSERT INTO attachments (id, ref_type, ref_id, name, mime, size, path, created_at) VALUES (:id, :rt, :ri, :n, :m, :s, :p, :c)')
+        Db::pdo()->prepare('INSERT INTO attachments (id, user_id, ref_type, ref_id, name, mime, size, path, created_at) VALUES (:id, :uid, :rt, :ri, :n, :m, :s, :p, :c)')
             ->execute([
                 ':id' => $id,
+                ':uid' => $uid,
                 ':rt' => (string) ($req->body['ref_type'] ?? 'task'),
                 ':ri' => (string) ($req->body['ref_id'] ?? ''),
                 ':n'  => $name,

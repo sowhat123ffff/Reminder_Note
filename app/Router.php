@@ -61,6 +61,7 @@ final class Router
                 }
                 if (!$r['public']) {
                     Auth::requireAccess();
+                    Auth::touchCurrentSession();
                 }
                 $params = [];
                 foreach ($m as $k => $v) {

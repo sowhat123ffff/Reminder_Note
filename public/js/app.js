@@ -8,7 +8,7 @@ import timeGrid from '@fullcalendar/timegrid';
 import interaction from '@fullcalendar/interaction';
 
 import { api, isAuthenticated, clearTokens } from './api.js';
-import { Tasks, Notes } from './db-local.js';
+import { Tasks, Notes, uuid as newId } from './db-local.js';
 import { startAutoSync, syncNow } from './sync.js';
 import { parse as parseNL } from './parser.js';
 import { renderMarkdown, stripMarkdown } from './markdown.js';
@@ -21,7 +21,7 @@ if (!isAuthenticated()) {
 
 window.Alpine = Alpine;
 
-const VIEWS = ['today', 'calendar', 'kanban', 'notes', 'stats', 'trash'];
+const VIEWS = ['today', 'calendar', 'kanban', 'notes', 'stats', 'trash', 'account'];
 const PRIORITY_LABEL = ['低', '中', '高', '紧急'];
 const PRIORITY_COLOR = ['ink-400', 'brand-500', 'amber-500', 'accent-500'];
 
@@ -65,6 +65,56 @@ function dueClass(t) {
     if (diff < 0) return 'text-accent-500';
     if (diff < 60 * 60_000) return 'text-amber-500';
     return 'text-ink-500 dark:text-ink-400';
+}
+
+function formatDateTime(ts) {
+    if (!ts) return '—';
+    return new Date(ts * (ts < 1e12 ? 1000 : 1)).toLocaleString('zh-CN', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+}
+
+function formatRelative(ts) {
+    if (!ts) return '从未';
+    const ms = ts * (ts < 1e12 ? 1000 : 1);
+    const diff = Date.now() - ms;
+    if (diff < 60_000) return '刚刚';
+    if (diff < 3600_000) return Math.floor(diff / 60_000) + ' 分钟前';
+    if (diff < 86400_000) return Math.floor(diff / 3600_000) + ' 小时前';
+    if (diff < 30 * 86400_000) return Math.floor(diff / 86400_000) + ' 天前';
+    return formatDateTime(ts);
+}
+
+/**
+ * Tiny User-Agent classifier — good enough for the sessions list.
+ * We avoid pulling a parser dependency for this one cosmetic feature.
+ */
+function parseUA(ua) {
+    if (!ua) return { label: '未知设备', icon: 'monitor' };
+    const u = String(ua);
+    let os = 'Unknown OS';
+    if (/Windows NT 10\.0/.test(u)) os = 'Windows';
+    else if (/Windows/.test(u)) os = 'Windows';
+    else if (/Android/.test(u)) os = 'Android';
+    else if (/iPhone|iPad|iPod/.test(u)) os = 'iOS';
+    else if (/Mac OS X/.test(u)) os = 'macOS';
+    else if (/Linux/.test(u)) os = 'Linux';
+
+    let browser = 'Unknown';
+    if (/Edg\//.test(u)) browser = 'Edge';
+    else if (/OPR\//.test(u)) browser = 'Opera';
+    else if (/Firefox\//.test(u)) browser = 'Firefox';
+    else if (/Chrome\//.test(u)) browser = 'Chrome';
+    else if (/Safari\//.test(u)) browser = 'Safari';
+    else if (/curl\//i.test(u)) browser = 'curl';
+    else if (/PHP/.test(u)) browser = 'PHP';
+
+    let icon = 'monitor';
+    if (os === 'Android' || os === 'iOS') icon = 'smartphone';
+    else if (os === 'macOS' || os === 'iOS') icon = 'apple';
+
+    return { label: `${browser} · ${os}`, icon };
 }
 
 function dispatchSyncNow() {
@@ -128,6 +178,7 @@ Alpine.data('appShell', () => ({
     allTasks: [],
     search: '',
     theme: getTheme(),
+    me: null,
 
     filterTasks(items) {
         const s = (this.search || '').trim().toLowerCase();
@@ -183,6 +234,12 @@ Alpine.data('appShell', () => ({
             this.online = false;
             this.justBackOnline = false;
         });
+
+        // Best-effort: fetch current user so the sidebar shows username and
+        // the account view can mark "current session". Token is already valid
+        // here (isAuthenticated check above passed), so a 401 means it expired
+        // between the check and now — let the auto-refresh in api.js handle it.
+        api.me().then(r => { this.me = r?.user || null; }).catch(() => {});
 
         await this.refreshAll();
         startAutoSync(5 * 60_000, async (result) => {
@@ -568,15 +625,22 @@ Alpine.data('appShell', () => ({
             const taskCount = Array.isArray(data.tasks) ? data.tasks.length : 0;
             const noteCount = Array.isArray(data.notes) ? data.notes.length : 0;
             const ok = await this.confirm(
-                `将导入 ${taskCount} 个任务 + ${noteCount} 个笔记。\n\n冲突时按更新时间合并(更新者胜)。继续吗?`,
+                `将导入 ${taskCount} 个任务 + ${noteCount} 个笔记到当前账号。\n\n每条记录会以新 id 加入，不会覆盖现有数据；如果你是从其它账号导入，原账号不受影响。继续吗？`,
                 { title: '导入备份', confirmLabel: '导入' },
             );
             if (!ok) return;
+            // Always re-assign ids on import. The backup file's ids are owned
+            // by the original account on the server; reusing them would either
+            // (a) hit id_conflict on the server when importing into a *different*
+            // account or (b) silently overwrite an existing record in the same
+            // account. Treating import as "create new" is the safe default.
             for (const t of data.tasks || []) {
-                await Tasks.upsert(t);
+                const { id: _, dirty: __, ...rest } = t || {};
+                await Tasks.upsert({ ...rest, id: newId() });
             }
             for (const n of data.notes || []) {
-                await Notes.upsert(n);
+                const { id: _, dirty: __, ...rest } = n || {};
+                await Notes.upsert({ ...rest, id: newId() });
             }
             dispatchSyncNow();
             await this.refreshAll();
@@ -613,7 +677,130 @@ Alpine.data('appShell', () => ({
     },
 
     fmtTime, dueClass, relativeRemaining, renderMarkdown, stripMarkdown,
+    formatDateTime, formatRelative, parseUA,
     PRIORITY_LABEL, PRIORITY_COLOR,
+}));
+
+Alpine.data('accountView', () => ({
+    pwd: { old: '', new: '', confirm: '', busy: false, message: '', error: false },
+    sessions: [],
+    sessionsLoading: false,
+    history: [],
+    historyLoading: false,
+    _viewListener: null,
+
+    formatDateTime, formatRelative, parseUA,
+
+    async init() {
+        // Lazy-load when entering the view; refresh whenever the view becomes
+        // visible again (e.g. user switches to it from another tab).
+        this._viewListener = () => {
+            const shell = Alpine.$data(document.querySelector('[x-data="appShell"]'));
+            if (shell?.view === 'account') {
+                this.loadSessions();
+                this.loadHistory();
+            }
+        };
+        window.addEventListener('hashchange', this._viewListener);
+        await Promise.all([this.loadSessions(), this.loadHistory()]);
+        this.$nextTick(() => createIcons({ icons }));
+    },
+    destroy() {
+        if (this._viewListener) window.removeEventListener('hashchange', this._viewListener);
+    },
+
+    async loadSessions() {
+        this.sessionsLoading = true;
+        try {
+            const r = await api.listSessions();
+            this.sessions = r?.sessions || [];
+        } catch (e) {
+            this.sessions = [];
+            console.warn('[account] load sessions failed', e);
+        } finally {
+            this.sessionsLoading = false;
+            this.$nextTick(() => createIcons({ icons }));
+        }
+    },
+
+    async loadHistory() {
+        this.historyLoading = true;
+        try {
+            const r = await api.loginHistory(50);
+            this.history = r?.attempts || [];
+        } catch (e) {
+            this.history = [];
+            console.warn('[account] load history failed', e);
+        } finally {
+            this.historyLoading = false;
+            this.$nextTick(() => createIcons({ icons }));
+        }
+    },
+
+    async submitPasswordChange() {
+        const shell = Alpine.$data(document.querySelector('[x-data="appShell"]'));
+        this.pwd.error = false;
+        this.pwd.message = '';
+        if (!this.pwd.old || !this.pwd.new || !this.pwd.confirm) {
+            this.pwd.error = true; this.pwd.message = '请填写所有字段'; return;
+        }
+        if (this.pwd.new !== this.pwd.confirm) {
+            this.pwd.error = true; this.pwd.message = '两次输入的新密码不一致'; return;
+        }
+        if (this.pwd.new.length < 8) {
+            this.pwd.error = true; this.pwd.message = '新密码至少 8 位'; return;
+        }
+        if (this.pwd.new === this.pwd.old) {
+            this.pwd.error = true; this.pwd.message = '新密码不能与旧密码相同'; return;
+        }
+        this.pwd.busy = true;
+        try {
+            await api.changePassword(this.pwd.old, this.pwd.new);
+            this.pwd.error = false;
+            this.pwd.message = '密码已修改，其它设备已强制下线';
+            this.pwd.old = this.pwd.new = this.pwd.confirm = '';
+            await this.loadSessions();
+            shell?.flash?.('密码已修改');
+        } catch (e) {
+            this.pwd.error = true;
+            this.pwd.message = e?.message || '修改失败';
+        } finally {
+            this.pwd.busy = false;
+        }
+    },
+
+    async revokeOne(session) {
+        const shell = Alpine.$data(document.querySelector('[x-data="appShell"]'));
+        if (session.is_current) return;
+        const ok = await shell.confirm(`注销该会话？\n${parseUA(session.user_agent).label} · ${session.ip || '未知 IP'}`, {
+            title: '注销会话', confirmLabel: '注销', danger: true,
+        });
+        if (!ok) return;
+        try {
+            await api.revokeSession(session.jti);
+            await this.loadSessions();
+            shell?.flash?.('已注销该会话');
+        } catch (e) {
+            shell?.flash?.('注销失败：' + (e?.message || e));
+        }
+    },
+
+    async revokeAll() {
+        const shell = Alpine.$data(document.querySelector('[x-data="appShell"]'));
+        const others = this.sessions.filter(s => !s.is_current).length;
+        if (!others) return;
+        const ok = await shell.confirm(`将注销其它 ${others} 个会话（保留当前浏览器）。继续吗？`, {
+            title: '注销所有其它设备', confirmLabel: '全部注销', danger: true,
+        });
+        if (!ok) return;
+        try {
+            const r = await api.revokeAllSessions();
+            await this.loadSessions();
+            shell?.flash?.('已注销 ' + (r?.revoked ?? others) + ' 个会话');
+        } catch (e) {
+            shell?.flash?.('操作失败：' + (e?.message || e));
+        }
+    },
 }));
 
 Alpine.data('todayView', () => ({

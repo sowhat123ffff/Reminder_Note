@@ -205,4 +205,21 @@ const Meta = {
     async set(key, value) { await db.meta.put({ key, value }); },
 };
 
-export { db, Tasks, Notes, Meta, uuid, now };
+/**
+ * Hard-reset the local cache. Used on login/logout so a previous user's
+ * tasks/notes/lastSyncAt do not leak into the next account on this device.
+ */
+async function wipeAll() {
+    try {
+        await db.transaction('rw', db.tasks, db.notes, db.meta, async () => {
+            await db.tasks.clear();
+            await db.notes.clear();
+            await db.meta.clear();
+        });
+    } catch (e) {
+        console.warn('[db-local] wipeAll failed, falling back to deleteDatabase', e);
+        try { await db.delete(); await db.open(); } catch { /* ignore */ }
+    }
+}
+
+export { db, Tasks, Notes, Meta, uuid, now, wipeAll };

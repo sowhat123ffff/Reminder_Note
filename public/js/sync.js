@@ -15,16 +15,28 @@ export async function pushDirty() {
         notes: notes.map(serializeNote),
     };
     const res = await api.syncPush(payload);
-    // Use the locally-pushed updated_at (not the server-confirmed one) so that
-    // any record that was edited again while the push was in flight keeps its
-    // dirty flag and is re-pushed on the next sync.
-    const pushedTasks = tasks.map(t => ({ id: t.id, updated_at: t.updated_at }));
-    const pushedNotes = notes.map(n => ({ id: n.id, updated_at: n.updated_at }));
+    // Only clear dirty for records the server actually accepted. Anything in
+    // res.rejected (id_conflict / missing_title / invalid_id ...) keeps its
+    // dirty=1 so the next syncNow re-tries — otherwise a rejected record
+    // would silently turn into "looks synced but isn't" ghost data.
+    //
+    // Use the locally-pushed updated_at (not the server-confirmed one) so a
+    // local edit made while the push was in flight keeps dirty=1 and gets
+    // re-pushed on the next sync.
+    const rejected = res.rejected || [];
+    const rejectedTaskIds = new Set(rejected.filter(r => r.type === 'task').map(r => r.id));
+    const rejectedNoteIds = new Set(rejected.filter(r => r.type === 'note').map(r => r.id));
+    const pushedTasks = tasks
+        .filter(t => !rejectedTaskIds.has(t.id))
+        .map(t => ({ id: t.id, updated_at: t.updated_at }));
+    const pushedNotes = notes
+        .filter(n => !rejectedNoteIds.has(n.id))
+        .map(n => ({ id: n.id, updated_at: n.updated_at }));
     if (pushedTasks.length) await Tasks.clearDirty(pushedTasks);
     if (pushedNotes.length) await Notes.clearDirty(pushedNotes);
     if (res.appliedTasks?.length) await Tasks.replaceFromServer(res.appliedTasks);
     if (res.appliedNotes?.length) await Notes.replaceFromServer(res.appliedNotes);
-    return { pushed: tasks.length + notes.length, rejected: res.rejected || [] };
+    return { pushed: tasks.length + notes.length, rejected };
 }
 
 export async function pullSince() {

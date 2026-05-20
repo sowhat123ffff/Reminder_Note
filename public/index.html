@@ -44,6 +44,15 @@
                     <span x-text="item.label"></span>
                 </button>
             </template>
+            <div x-show="me?.username" class="mt-3 pt-3 border-t border-ink-200/60 dark:border-ink-800/60">
+                <button @click="setView('account')"
+                        :class="view==='account' ? 'bg-brand-500/15 text-brand-600 dark:text-brand-300' : 'hover:bg-ink-100 dark:hover:bg-ink-800 text-ink-700 dark:text-ink-200'"
+                        class="w-full flex items-center gap-3 px-3 py-2 rounded-xl transition text-sm font-medium">
+                    <i data-lucide="user-circle-2" class="w-4 h-4"></i>
+                    <span class="flex-1 text-left truncate" x-text="me?.username || '账号'"></span>
+                    <i data-lucide="chevron-right" class="w-3.5 h-3.5 opacity-60"></i>
+                </button>
+            </div>
         </nav>
         <div class="p-3 border-t border-ink-200/60 dark:border-ink-800/60 space-y-2">
             <div x-data="pomodoro" class="card p-3">
@@ -153,6 +162,10 @@
                 </button>
             </template>
             <div class="flex-1"></div>
+            <button @click="setView('account')" class="btn-ghost w-full justify-start text-sm">
+                <i data-lucide="user-circle-2" class="w-4 h-4"></i>
+                <span x-text="me?.username ? ('账号：' + me.username) : '账号设置'"></span>
+            </button>
             <button @click="setAppPin()" class="btn-ghost w-full justify-start text-sm md:hidden">
                 <i data-lucide="shield" class="w-4 h-4"></i> 开启 PIN
             </button>
@@ -515,6 +528,122 @@
                             <div class="text-xs text-ink-400 text-center py-2">没有未完成任务</div>
                         </template>
                     </div>
+                </div>
+            </section>
+
+            <!-- =============== ACCOUNT VIEW =============== -->
+            <section x-show="view==='account'" x-transition.opacity x-data="accountView" class="pt-6 max-w-3xl mx-auto space-y-4">
+                <div>
+                    <h1 class="text-2xl font-semibold tracking-tight">账号设置</h1>
+                    <p class="text-sm text-ink-500 mt-1">
+                        <template x-if="$root.me?.username">
+                            <span>当前账号：<span class="font-mono" x-text="$root.me.username"></span></span>
+                        </template>
+                    </p>
+                </div>
+
+                <!-- ===== Change password ===== -->
+                <div class="card p-5 space-y-3">
+                    <h2 class="font-medium flex items-center gap-2">
+                        <i data-lucide="key-round" class="w-4 h-4 text-brand-500"></i> 修改密码
+                    </h2>
+                    <p class="text-xs text-ink-500">修改成功后，你<strong class="text-ink-700 dark:text-ink-200">当前的浏览器</strong>会保持登录，其它所有设备会被自动登出。</p>
+                    <form @submit.prevent="submitPasswordChange()" class="space-y-2">
+                        <input type="password" autocomplete="current-password" x-model="pwd.old" placeholder="当前密码" class="input" />
+                        <input type="password" autocomplete="new-password" x-model="pwd.new" placeholder="新密码（至少 8 位）" class="input" />
+                        <input type="password" autocomplete="new-password" x-model="pwd.confirm" placeholder="再次输入新密码" class="input" />
+                        <div class="flex items-center gap-2">
+                            <button type="submit" class="btn-primary text-sm" :disabled="pwd.busy">
+                                <i :data-lucide="pwd.busy ? 'loader-2' : 'check'" :class="pwd.busy ? 'animate-spin' : ''" class="w-4 h-4"></i>
+                                <span x-text="pwd.busy ? '提交中…' : '修改密码'"></span>
+                            </button>
+                            <span class="text-xs" :class="pwd.error ? 'text-accent-500' : 'text-emerald-500'" x-text="pwd.message"></span>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- ===== Active sessions ===== -->
+                <div class="card p-5 space-y-3">
+                    <div class="flex items-start justify-between gap-3 flex-wrap">
+                        <h2 class="font-medium flex items-center gap-2 whitespace-nowrap">
+                            <i data-lucide="monitor-smartphone" class="w-4 h-4 text-brand-500"></i>
+                            <span>活跃会话</span>
+                            <span class="chip" x-text="sessions.length"></span>
+                        </h2>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <button @click="loadSessions()" class="btn-ghost text-xs whitespace-nowrap" :disabled="sessionsLoading">
+                                <i :data-lucide="sessionsLoading ? 'loader-2' : 'refresh-cw'" :class="sessionsLoading ? 'animate-spin' : ''" class="w-3.5 h-3.5"></i> 刷新
+                            </button>
+                            <button @click="revokeAll()" class="btn-ghost text-xs text-accent-500 whitespace-nowrap" :disabled="sessions.filter(s => !s.is_current).length === 0">
+                                <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+                                <span class="hidden sm:inline">注销所有其它设备</span>
+                                <span class="sm:hidden">全部注销</span>
+                            </button>
+                        </div>
+                    </div>
+                    <p class="text-xs text-ink-500">如果你看到不认识的会话，立即注销它，并修改密码。</p>
+                    <ul class="divide-y divide-ink-100 dark:divide-ink-800/60">
+                        <template x-for="s in sessions" :key="s.jti">
+                            <li class="py-3 flex items-start gap-3">
+                                <div class="w-8 h-8 rounded-lg bg-ink-100 dark:bg-ink-800 grid place-items-center shrink-0">
+                                    <i :data-lucide="parseUA(s.user_agent).icon" class="w-4 h-4 text-ink-500"></i>
+                                </div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="text-sm font-medium flex items-center gap-2 flex-wrap">
+                                        <span x-text="parseUA(s.user_agent).label"></span>
+                                        <template x-if="s.is_current"><span class="chip bg-brand-500/15 text-brand-600 dark:text-brand-300">当前会话</span></template>
+                                    </div>
+                                    <div class="text-xs text-ink-500 mt-0.5 break-all">
+                                        IP <span class="font-mono" x-text="s.ip || '—'"></span>
+                                        · 最后活动 <span x-text="formatRelative(s.last_used_at || s.created_at)"></span>
+                                        · 创建于 <span x-text="formatDateTime(s.created_at)"></span>
+                                    </div>
+                                </div>
+                                <button @click="revokeOne(s)" :disabled="s.is_current"
+                                        class="btn-ghost text-xs disabled:opacity-40 whitespace-nowrap shrink-0"
+                                        :class="s.is_current ? '' : 'text-accent-500'">
+                                    <i data-lucide="x" class="w-3.5 h-3.5"></i> 注销
+                                </button>
+                            </li>
+                        </template>
+                        <template x-if="!sessions.length && !sessionsLoading">
+                            <li class="py-6 text-center text-sm text-ink-500">没有活跃会话</li>
+                        </template>
+                    </ul>
+                </div>
+
+                <!-- ===== Login history ===== -->
+                <div class="card p-5 space-y-3">
+                    <div class="flex items-start justify-between gap-3 flex-wrap">
+                        <h2 class="font-medium flex items-center gap-2 flex-wrap">
+                            <i data-lucide="history" class="w-4 h-4 text-brand-500 shrink-0"></i>
+                            <span>登录历史</span>
+                            <span class="text-xs text-ink-400 font-normal">最近 30 天，最多 50 条</span>
+                        </h2>
+                        <button @click="loadHistory()" class="btn-ghost text-xs whitespace-nowrap" :disabled="historyLoading">
+                            <i :data-lucide="historyLoading ? 'loader-2' : 'refresh-cw'" :class="historyLoading ? 'animate-spin' : ''" class="w-3.5 h-3.5"></i> 刷新
+                        </button>
+                    </div>
+                    <p class="text-xs text-ink-500">如果你看到陌生 IP 的“登录失败”尝试，对方可能在猜你的密码 — 请考虑改用更强的密码。</p>
+                    <ul class="divide-y divide-ink-100 dark:divide-ink-800/60">
+                        <template x-for="(a, idx) in history" :key="idx">
+                            <li class="py-2 flex items-start gap-3 text-sm">
+                                <span class="chip mt-0.5"
+                                      :class="a.success ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300' : 'bg-accent-500/15 text-accent-500'"
+                                      x-text="a.success ? '成功' : '失败'"></span>
+                                <div class="flex-1 min-w-0">
+                                    <div x-text="formatDateTime(a.created_at)"></div>
+                                    <div class="text-xs text-ink-500 mt-0.5">
+                                        IP <span class="font-mono" x-text="a.ip || '—'"></span>
+                                        · <span x-text="parseUA(a.user_agent).label"></span>
+                                    </div>
+                                </div>
+                            </li>
+                        </template>
+                        <template x-if="!history.length && !historyLoading">
+                            <li class="py-6 text-center text-sm text-ink-500">没有登录记录</li>
+                        </template>
+                    </ul>
                 </div>
             </section>
 

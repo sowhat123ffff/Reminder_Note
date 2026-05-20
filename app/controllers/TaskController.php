@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Auth;
 use App\Db;
 use App\HttpException;
 use App\Request;
@@ -16,10 +17,11 @@ final class TaskController
 
     public function list(Request $req): array
     {
+        $uid = Auth::userId();
         $q = $req->query;
 
-        $where = ['deleted_at IS NULL'];
-        $args  = [];
+        $where = ['user_id = :uid', 'deleted_at IS NULL'];
+        $args  = [':uid' => $uid];
 
         if (!empty($q['status']) && in_array((string) $q['status'], self::STATUSES, true)) {
             $where[] = 'status = :status';
@@ -27,7 +29,8 @@ final class TaskController
         }
 
         if (isset($q['include_deleted']) && $q['include_deleted'] === '1') {
-            array_shift($where);
+            // Drop the deleted_at filter (keep user_id at index 0).
+            $where = array_values(array_filter($where, fn($c) => $c !== 'deleted_at IS NULL'));
         }
 
         if (!empty($q['search'])) {
@@ -59,7 +62,7 @@ final class TaskController
         }
         $orderDir = (!empty($q['order']) && strtolower((string) $q['order']) === 'asc') ? 'ASC' : 'DESC';
 
-        $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+        $whereSql = 'WHERE ' . implode(' AND ', $where);
         $sql = "SELECT * FROM tasks {$whereSql} ORDER BY {$orderField} {$orderDir} LIMIT :limit OFFSET :offset";
         $stmt = Db::pdo()->prepare($sql);
         foreach ($args as $k => $v) {
@@ -88,7 +91,7 @@ final class TaskController
 
     public function show(Request $req, array $params): array
     {
-        $row = Db::findById('tasks', (string) $params['id']);
+        $row = Db::findByIdForUser('tasks', (string) $params['id'], Auth::userId());
         if (!$row) {
             throw new HttpException(404, 'not_found', 'Task not found');
         }
@@ -97,6 +100,7 @@ final class TaskController
 
     public function create(Request $req): array
     {
+        $uid = Auth::userId();
         $data = Validator::check($req->body, [
             'title'        => 'required|string|max:500',
             'notes'        => 'nullable|string|max:50000',
@@ -116,6 +120,7 @@ final class TaskController
 
         $row = [
             'id'           => $id,
+            'user_id'      => $uid,
             'title'        => (string) $data['title'],
             'notes'        => (string) ($data['notes'] ?? ''),
             'status'       => (string) ($data['status'] ?? 'todo'),
@@ -131,10 +136,11 @@ final class TaskController
             'deleted_at'   => null,
         ];
 
-        $sql = 'INSERT INTO tasks (id, title, notes, status, priority, due_at, remind_at, repeat_rule, tags, subtasks, created_at, updated_at, completed_at, deleted_at)
-                VALUES (:id, :title, :notes, :status, :priority, :due_at, :remind_at, :repeat_rule, :tags, :subtasks, :created_at, :updated_at, :completed_at, :deleted_at)';
+        $sql = 'INSERT INTO tasks (id, user_id, title, notes, status, priority, due_at, remind_at, repeat_rule, tags, subtasks, created_at, updated_at, completed_at, deleted_at)
+                VALUES (:id, :uid, :title, :notes, :status, :priority, :due_at, :remind_at, :repeat_rule, :tags, :subtasks, :created_at, :updated_at, :completed_at, :deleted_at)';
         Db::pdo()->prepare($sql)->execute([
             ':id'          => $row['id'],
+            ':uid'         => $row['user_id'],
             ':title'       => $row['title'],
             ':notes'       => $row['notes'],
             ':status'      => $row['status'],
@@ -155,8 +161,9 @@ final class TaskController
 
     public function update(Request $req, array $params): array
     {
+        $uid = Auth::userId();
         $id  = (string) $params['id'];
-        $row = Db::findById('tasks', $id);
+        $row = Db::findByIdForUser('tasks', $id, $uid);
         if (!$row) {
             throw new HttpException(404, 'not_found', 'Task not found');
         }
@@ -175,7 +182,7 @@ final class TaskController
 
         $now = Db::now();
         $set = [];
-        $args = [':id' => $id, ':updated_at' => $now];
+        $args = [':id' => $id, ':uid' => $uid, ':updated_at' => $now];
 
         $notNullDefault = [
             'title'  => '',
@@ -215,36 +222,38 @@ final class TaskController
             return ['task' => self::serialize($row)];
         }
 
-        $sql = 'UPDATE tasks SET ' . implode(', ', $set) . ' WHERE id = :id';
+        $sql = 'UPDATE tasks SET ' . implode(', ', $set) . ' WHERE id = :id AND user_id = :uid';
         Db::pdo()->prepare($sql)->execute($args);
 
-        return ['task' => self::serialize(Db::findById('tasks', $id))];
+        return ['task' => self::serialize(Db::findByIdForUser('tasks', $id, $uid))];
     }
 
     public function destroy(Request $req, array $params): array
     {
+        $uid = Auth::userId();
         $id  = (string) $params['id'];
-        $row = Db::findById('tasks', $id);
+        $row = Db::findByIdForUser('tasks', $id, $uid);
         if (!$row) {
             throw new HttpException(404, 'not_found', 'Task not found');
         }
         $now = Db::now();
-        Db::pdo()->prepare('UPDATE tasks SET deleted_at = :now, updated_at = :now WHERE id = :id')
-            ->execute([':id' => $id, ':now' => $now]);
+        Db::pdo()->prepare('UPDATE tasks SET deleted_at = :now, updated_at = :now WHERE id = :id AND user_id = :uid')
+            ->execute([':id' => $id, ':uid' => $uid, ':now' => $now]);
         return ['ok' => true];
     }
 
     public function restore(Request $req, array $params): array
     {
+        $uid = Auth::userId();
         $id  = (string) $params['id'];
-        $row = Db::findById('tasks', $id);
+        $row = Db::findByIdForUser('tasks', $id, $uid);
         if (!$row) {
             throw new HttpException(404, 'not_found', 'Task not found');
         }
         $now = Db::now();
-        Db::pdo()->prepare('UPDATE tasks SET deleted_at = NULL, updated_at = :now WHERE id = :id')
-            ->execute([':id' => $id, ':now' => $now]);
-        return ['task' => self::serialize(Db::findById('tasks', $id))];
+        Db::pdo()->prepare('UPDATE tasks SET deleted_at = NULL, updated_at = :now WHERE id = :id AND user_id = :uid')
+            ->execute([':id' => $id, ':uid' => $uid, ':now' => $now]);
+        return ['task' => self::serialize(Db::findByIdForUser('tasks', $id, $uid))];
     }
 
     public static function serialize(array $row): array

@@ -47,4 +47,5 @@ if (App\Config::isDebug()) {
     ini_set('log_errors', '1');
 }
 
+App\Config::resolveJwtSecret();
 App\Db::pdo();
