@@ -227,145 +227,138 @@
                 </form>
 
                 <!-- Overdue -->
-                <template x-if="today.overdue.length">
-                    <div>
-                        <h2 class="text-sm font-semibold text-accent-500 mb-2 flex items-center gap-2">
-                            <i data-lucide="alert-circle" class="w-4 h-4"></i> 逾期
-                        </h2>
-                        <ul class="space-y-2">
-                            <template x-for="t in filterTasks(today.overdue)" :key="t.id">
-                                <li>
-                                    <div class="card p-3 pl-4 flex items-center gap-3 group animate-fade-in priority-edge"
-                                         :class="'priority-' + (t.priority || 0)"
-                                         @touchstart.passive="touchSwipeStart($event)"
-                                         @touchend.prevent="swipeTask($event, t)"
-                                         @click="showTaskDetail = t">
-                                        <input type="checkbox" :checked="t.status==='done'"
-                                               @click.stop="toggleDone(t)"
-                                               class="w-5 h-5 rounded-md accent-brand-500 cursor-pointer" />
-                                        <div class="flex-1 min-w-0">
-                                            <div class="font-medium truncate" x-text="t.title"></div>
-                                            <div class="text-xs flex items-center gap-2 mt-0.5">
-                                                <span :class="dueClass(t)" x-text="fmtTime(t.due_at)"></span>
-                                                <template x-if="t.priority>=2">
-                                                    <span class="chip" x-text="PRIORITY_LABEL[t.priority]"></span>
-                                                </template>
-                                                <template x-for="tag in t.tags" :key="tag">
-                                                    <span class="chip" x-text="'#' + tag"></span>
-                                                </template>
-                                            </div>
+                <!-- x-show + always-mounted ul (instead of <template x-if> wrapping <template x-for>):
+                     Alpine 的 nested-template reactivity 在 x-if 与 x-for 嵌套且父 section 用 x-show
+                     toggle 时偶发 list 不渲染但父标题仍显示的 race（用户报"点击后任务消失，F5 才回来"）。
+                     同样 pattern 也搬到下面的 todoNow / later / done。 -->
+                <div x-show="today.overdue.length">
+                    <h2 class="text-sm font-semibold text-accent-500 mb-2 flex items-center gap-2">
+                        <i data-lucide="alert-circle" class="w-4 h-4"></i> 逾期
+                    </h2>
+                    <ul class="space-y-2">
+                        <template x-for="t in filterTasks(today.overdue)" :key="t.id">
+                            <li>
+                                <div class="card p-3 pl-4 flex items-center gap-3 group animate-fade-in priority-edge"
+                                     :class="'priority-' + (t.priority || 0)"
+                                     @touchstart.passive="touchSwipeStart($event)"
+                                     @touchend="swipeTask($event, t)"
+                                     @click="showTaskDetail = t">
+                                    <input type="checkbox" :checked="t.status==='done'"
+                                           @click.stop="toggleDone(t)"
+                                           class="w-5 h-5 rounded-md accent-brand-500 cursor-pointer" />
+                                    <div class="flex-1 min-w-0">
+                                        <div class="font-medium truncate" x-text="t.title"></div>
+                                        <div class="text-xs flex items-center gap-2 mt-0.5">
+                                            <span :class="dueClass(t)" x-text="fmtTime(t.due_at)"></span>
+                                            <template x-if="t.priority>=2">
+                                                <span class="chip" x-text="PRIORITY_LABEL[t.priority]"></span>
+                                            </template>
+                                            <template x-for="tag in t.tags" :key="tag">
+                                                <span class="chip" x-text="'#' + tag"></span>
+                                            </template>
                                         </div>
-                                        <button @click.stop="deleteTask(t)" class="opacity-0 group-hover:opacity-100 transition text-ink-400 hover:text-accent-500 p-1">
-                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
-                                        </button>
                                     </div>
-                                </li>
-                            </template>
-                        </ul>
-                    </div>
-                </template>
+                                    <button @click.stop="deleteTask(t)" class="opacity-0 group-hover:opacity-100 transition text-ink-400 hover:text-accent-500 p-1">
+                                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                    </button>
+                                </div>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
 
                 <!-- Today / no due -->
                 <div>
                     <h2 class="text-sm font-semibold text-ink-700 dark:text-ink-200 mb-2 flex items-center gap-2">
                         <i data-lucide="zap" class="w-4 h-4"></i> 今天
                     </h2>
-                    <template x-if="today.todoNow.length">
-                        <ul class="space-y-2">
-                            <template x-for="t in filterTasks(today.todoNow)" :key="t.id">
-                                <li>
-                                    <div class="card p-3 pl-4 flex items-center gap-3 group cursor-pointer hover:border-brand-400/40 transition animate-fade-in priority-edge"
-                                         :class="'priority-' + (t.priority || 0)"
-                                         @touchstart.passive="touchSwipeStart($event)"
-                                         @touchend.prevent="swipeTask($event, t)"
-                                         @click="showTaskDetail = t">
-                                        <input type="checkbox" :checked="t.status==='done'"
-                                               @click.stop="toggleDone(t)"
-                                               class="w-5 h-5 rounded-md accent-brand-500 cursor-pointer" />
-                                        <div class="flex-1 min-w-0">
-                                            <div class="font-medium truncate" x-text="t.title"></div>
-                                            <div class="text-xs flex items-center gap-2 mt-0.5 text-ink-500 dark:text-ink-400">
-                                                <template x-if="t.due_at">
-                                                    <span :class="dueClass(t)" x-text="fmtTime(t.due_at)"></span>
-                                                </template>
-                                                <template x-if="t.priority>=2">
-                                                    <span class="chip" x-text="PRIORITY_LABEL[t.priority]"></span>
-                                                </template>
-                                                <template x-if="t.status==='doing'">
-                                                    <span class="chip bg-brand-500/15 text-brand-600 dark:text-brand-300">进行中</span>
-                                                </template>
-                                                <template x-for="tag in t.tags" :key="tag">
-                                                    <span class="chip" x-text="'#' + tag"></span>
-                                                </template>
-                                                <template x-if="(t.subtasks || []).length">
-                                                    <span class="chip" x-text="(t.subtasks.filter(s=>s.done).length) + '/' + t.subtasks.length"></span>
-                                                </template>
-                                            </div>
+                    <ul class="space-y-2" x-show="today.todoNow.length">
+                        <template x-for="t in filterTasks(today.todoNow)" :key="t.id">
+                            <li>
+                                <div class="card p-3 pl-4 flex items-center gap-3 group cursor-pointer hover:border-brand-400/40 transition animate-fade-in priority-edge"
+                                     :class="'priority-' + (t.priority || 0)"
+                                     @touchstart.passive="touchSwipeStart($event)"
+                                     @touchend="swipeTask($event, t)"
+                                     @click="showTaskDetail = t">
+                                    <input type="checkbox" :checked="t.status==='done'"
+                                           @click.stop="toggleDone(t)"
+                                           class="w-5 h-5 rounded-md accent-brand-500 cursor-pointer" />
+                                    <div class="flex-1 min-w-0">
+                                        <div class="font-medium truncate" x-text="t.title"></div>
+                                        <div class="text-xs flex items-center gap-2 mt-0.5 text-ink-500 dark:text-ink-400">
+                                            <template x-if="t.due_at">
+                                                <span :class="dueClass(t)" x-text="fmtTime(t.due_at)"></span>
+                                            </template>
+                                            <template x-if="t.priority>=2">
+                                                <span class="chip" x-text="PRIORITY_LABEL[t.priority]"></span>
+                                            </template>
+                                            <template x-if="t.status==='doing'">
+                                                <span class="chip bg-brand-500/15 text-brand-600 dark:text-brand-300">进行中</span>
+                                            </template>
+                                            <template x-for="tag in t.tags" :key="tag">
+                                                <span class="chip" x-text="'#' + tag"></span>
+                                            </template>
+                                            <template x-if="(t.subtasks || []).length">
+                                                <span class="chip" x-text="(t.subtasks.filter(s=>s.done).length) + '/' + t.subtasks.length"></span>
+                                            </template>
                                         </div>
-                                        <button @click.stop="deleteTask(t)" class="opacity-0 group-hover:opacity-100 transition text-ink-400 hover:text-accent-500 p-1">
-                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
-                                        </button>
                                     </div>
-                                </li>
-                            </template>
-                        </ul>
-                    </template>
-                    <template x-if="!today.todoNow.length">
-                        <div class="card p-8 text-center text-ink-500 dark:text-ink-400 text-sm">
-                            <i data-lucide="check-check" class="w-10 h-10 mx-auto mb-2 text-brand-400"></i>
-                            今天暂无待办，享受一下空闲时间吧。
-                        </div>
-                    </template>
+                                    <button @click.stop="deleteTask(t)" class="opacity-0 group-hover:opacity-100 transition text-ink-400 hover:text-accent-500 p-1">
+                                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                    </button>
+                                </div>
+                            </li>
+                        </template>
+                    </ul>
+                    <div class="card p-8 text-center text-ink-500 dark:text-ink-400 text-sm" x-show="!today.todoNow.length">
+                        <i data-lucide="check-check" class="w-10 h-10 mx-auto mb-2 text-brand-400"></i>
+                        今天暂无待办，享受一下空闲时间吧。
+                    </div>
                 </div>
 
                 <!-- Later -->
-                <template x-if="today.later.length">
-                    <div x-data="{ expanded: false }">
-                        <h2 class="text-sm font-semibold text-ink-500 dark:text-ink-400 mb-2 flex items-center gap-2">
-                            <i data-lucide="clock" class="w-4 h-4"></i>
-                            <span>之后</span>
-                            <span class="text-xs font-normal text-ink-400" x-text="'· ' + filterTasks(today.later).length"></span>
-                        </h2>
-                        <ul class="space-y-2">
-                            <template x-for="t in (expanded ? filterTasks(today.later) : filterTasks(today.later).slice(0, 5))" :key="t.id">
-                                <li class="card p-3 pl-4 flex items-center gap-3 cursor-pointer priority-edge"
-                                    :class="'priority-' + (t.priority || 0)"
-                                    @touchstart.passive="touchSwipeStart($event)"
-                                    @touchend.prevent="swipeTask($event, t)"
-                                    @click="showTaskDetail = t">
-                                    <i data-lucide="circle" class="w-4 h-4 text-ink-400"></i>
-                                    <div class="flex-1 min-w-0">
-                                        <div class="font-medium truncate" x-text="t.title"></div>
-                                        <div class="text-xs text-ink-500" x-text="fmtTime(t.due_at) + ' · ' + relativeRemaining(t.due_at)"></div>
-                                    </div>
-                                </li>
-                            </template>
-                        </ul>
-                        <template x-if="filterTasks(today.later).length > 5">
-                            <button @click="expanded = !expanded" class="btn-ghost text-xs mt-2 w-full justify-center">
-                                <i :data-lucide="expanded ? 'chevron-up' : 'chevron-down'" class="w-4 h-4"></i>
-                                <span x-text="expanded ? '收起' : ('展开剩余 ' + (filterTasks(today.later).length - 5) + ' 项')"></span>
-                            </button>
+                <div x-show="today.later.length" x-data="{ expanded: false }">
+                    <h2 class="text-sm font-semibold text-ink-500 dark:text-ink-400 mb-2 flex items-center gap-2">
+                        <i data-lucide="clock" class="w-4 h-4"></i>
+                        <span>之后</span>
+                        <span class="text-xs font-normal text-ink-400" x-text="'· ' + filterTasks(today.later).length"></span>
+                    </h2>
+                    <ul class="space-y-2">
+                        <template x-for="t in (expanded ? filterTasks(today.later) : filterTasks(today.later).slice(0, 5))" :key="t.id">
+                            <li class="card p-3 pl-4 flex items-center gap-3 cursor-pointer priority-edge"
+                                :class="'priority-' + (t.priority || 0)"
+                                @touchstart.passive="touchSwipeStart($event)"
+                                @touchend="swipeTask($event, t)"
+                                @click="showTaskDetail = t">
+                                <i data-lucide="circle" class="w-4 h-4 text-ink-400"></i>
+                                <div class="flex-1 min-w-0">
+                                    <div class="font-medium truncate" x-text="t.title"></div>
+                                    <div class="text-xs text-ink-500" x-text="fmtTime(t.due_at) + ' · ' + relativeRemaining(t.due_at)"></div>
+                                </div>
+                            </li>
                         </template>
-                    </div>
-                </template>
+                    </ul>
+                    <button x-show="filterTasks(today.later).length > 5"
+                            @click="expanded = !expanded" class="btn-ghost text-xs mt-2 w-full justify-center">
+                        <i :data-lucide="expanded ? 'chevron-up' : 'chevron-down'" class="w-4 h-4"></i>
+                        <span x-text="expanded ? '收起' : ('展开剩余 ' + (filterTasks(today.later).length - 5) + ' 项')"></span>
+                    </button>
+                </div>
 
                 <!-- Done today -->
-                <template x-if="today.done.length">
-                    <details class="card p-3">
-                        <summary class="cursor-pointer text-sm text-ink-500 dark:text-ink-400 select-none">
-                            今日已完成 (<span x-text="today.done.length"></span>)
-                        </summary>
-                        <ul class="mt-2 space-y-1">
-                            <template x-for="t in today.done" :key="t.id">
-                                <li class="flex items-center gap-3 text-sm text-ink-500 dark:text-ink-400 line-through">
-                                    <i data-lucide="check" class="w-4 h-4 text-emerald-500"></i>
-                                    <span x-text="t.title"></span>
-                                </li>
-                            </template>
-                        </ul>
-                    </details>
-                </template>
+                <details class="card p-3" x-show="today.done.length">
+                    <summary class="cursor-pointer text-sm text-ink-500 dark:text-ink-400 select-none">
+                        今日已完成 (<span x-text="today.done.length"></span>)
+                    </summary>
+                    <ul class="mt-2 space-y-1">
+                        <template x-for="t in today.done" :key="t.id">
+                            <li class="flex items-center gap-3 text-sm text-ink-500 dark:text-ink-400 line-through">
+                                <i data-lucide="check" class="w-4 h-4 text-emerald-500"></i>
+                                <span x-text="t.title"></span>
+                            </li>
+                        </template>
+                    </ul>
+                </details>
             </section>
 
             <!-- =============== CALENDAR VIEW =============== -->

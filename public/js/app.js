@@ -357,8 +357,17 @@ Alpine.data('appShell', () => ({
         const x0 = Number(el?.dataset?.sx ?? NaN);
         if (!t || Number.isNaN(x0)) return;
         const dx = t.clientX - x0;
-        if (dx < -56) this.toggleDone(task);
-        else if (dx > 56 && task.status !== 'done') this.deleteTask(task);
+        // Only call preventDefault when we actually act on a swipe — that way a
+        // plain tap (|dx| <= 56) lets the browser fire the synthetic click and
+        // the detail drawer opens. Previously @touchend.prevent always blocked
+        // the click, so on touch devices tapping a task did nothing.
+        if (dx < -56) {
+            ev.preventDefault();
+            this.toggleDone(task);
+        } else if (dx > 56 && task.status !== 'done') {
+            ev.preventDefault();
+            this.deleteTask(task);
+        }
     },
 
     async verifyAppPin() {
